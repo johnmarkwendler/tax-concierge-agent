@@ -1,0 +1,5 @@
+{
+  "event_type": "DOCUMENT_UPLOADED",
+  "document_type": "K1",
+  "file_path": "tests/sample_k1.pdf"
+}

@@ -1,0 +1,39 @@
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v5.0.0
+    hooks:
+      - id: end-of-file-fixer
+      - id: trailing-whitespace
+      - id: check-yaml
+      - id: check-json
+
+  - repo: local
+    hooks:
+      - id: semgrep-tax-concierge-security
+        name: Semgrep Tax Concierge security scan
+        entry: semgrep
+        language: python
+        additional_dependencies:
+          - semgrep==1.167.0
+        types:
+          - python
+        pass_filenames: false
+        args:
+          - --config
+          - tax-concierge-agent/tax_concierge_agent/.semgrep/rules.yaml
+          - --error
+          - --no-git-ignore
+          - --x-ignore-semgrepignore-files
+          - --exclude
+          - tax-concierge-agent/artifacts
+          - --exclude
+          - tax-concierge-agent/traces
+          - --exclude
+          - tax-concierge-agent/artifacts/traces
+          - --exclude
+          - tax-concierge-agent/artifacts/eval-local
+          - --exclude
+          - tax-concierge-agent/.venv
+          - --exclude
+          - tax-concierge-agent/**/__pycache__
+          - tax-concierge-agent

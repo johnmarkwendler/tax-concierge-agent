@@ -1,0 +1,32 @@
+rules:
+  - id: tax-concierge.hardcoded-google-api-key
+    message: Google API keys must never be committed. Load secrets from environment variables or secure configuration instead.
+    severity: ERROR
+    languages:
+      - python
+    patterns:
+      - pattern-regex: 'AIzaSy[A-Za-z0-9_-]*'
+
+  - id: tax-concierge.hardcoded-ssn
+    message: Potential SSN detected. Taxpayer PII must never be hardcoded or committed.
+    severity: ERROR
+    languages:
+      - python
+    patterns:
+      - pattern-regex: '\b\d{3}-\d{2}-\d{4}\b'
+
+  - id: tax-concierge.hardcoded-ein
+    message: Potential EIN detected. Business taxpayer identifiers must not appear in source code.
+    severity: ERROR
+    languages:
+      - python
+    patterns:
+      - pattern-regex: '\b\d{2}-\d{7}\b'
+
+  - id: tax-concierge.hardcoded-payment-card
+    message: Potential payment card data detected.
+    severity: ERROR
+    languages:
+      - python
+    patterns:
+      - pattern-regex: '\b(?:\d[ -]*?){13,19}\b'

@@ -1,0 +1,7 @@
+{
+  "event_type": "FOLLOWUP_RESPONSE",
+  "answers": {
+    "state": "California",
+    "married": true
+  }
+}

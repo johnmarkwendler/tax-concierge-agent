@@ -1,0 +1,50 @@
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v5.0.0
+    hooks:
+      - id: check-added-large-files
+      - id: check-ast
+      - id: check-json
+      - id: check-merge-conflict
+      - id: check-toml
+      - id: check-yaml
+      - id: debug-statements
+      - id: detect-private-key
+      - id: end-of-file-fixer
+      - id: trailing-whitespace
+
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.14.9
+    hooks:
+      - id: ruff-check
+        args: [--fix]
+      - id: ruff-format
+
+  - repo: local
+    hooks:
+      - id: semgrep
+        name: semgrep
+        entry: semgrep
+        language: python
+        additional_dependencies:
+          - semgrep==1.167.0
+        pass_filenames: false
+        args:
+          - --config
+          - tax-concierge-agent/tax_concierge_agent/.semgrep/rules.yaml
+          - --config
+          - p/secrets
+          - --config
+          - p/security-audit
+          - --error
+          - --no-git-ignore
+          - --x-ignore-semgrepignore-files
+          - --exclude
+          - tax-concierge-agent/.venv
+          - --exclude
+          - tax-concierge-agent/artifacts
+          - --exclude
+          - tax-concierge-agent/.ruff_cache
+          - --exclude
+          - tax-concierge-agent/.pytest_cache
+          - tax-concierge-agent

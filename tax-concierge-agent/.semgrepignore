@@ -1,0 +1,11 @@
+.venv/
+.ruff_cache/
+.pytest_cache/
+.mypy_cache/
+.ty/
+artifacts/
+dist/
+build/
+__pycache__/
+
+!tests/security/**
