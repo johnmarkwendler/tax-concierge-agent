@@ -22,6 +22,7 @@ from tax_concierge_agent.models import (
     FactExtraction,
     HumanInputResponse,
     TaxIntake,
+    TAX_CONCIERGE_CATALOG_ID,
     UploadedDocument,
 )
 
@@ -242,7 +243,7 @@ def test_dynamic_ui_is_driven_by_missing_facts(
 
     component = _component_by_id(with_ui.a2ui_messages, missing_fact)
     assert component.id == missing_fact
-    assert component.component == "ChoicePicker"
+    assert component.component == "SegmentedChoiceCards"
 
 
 def test_followup_questions_include_explainability() -> None:
@@ -284,16 +285,12 @@ def test_a2ui_messages_use_official_protocol_shape() -> None:
         "updateDataModel",
         "updateComponents",
     ]
-    assert all(message["version"].startswith("0.9") for message in serialized)
+    assert all(message["version"] == "0.9.1" for message in serialized)
     assert all(message["surfaceId"] == "tax-intake" for message in serialized)
-    assert all(message["catalogId"] == "basic" for message in serialized)
+    assert all(message["catalogId"] == TAX_CONCIERGE_CATALOG_ID for message in serialized)
     assert "schema_version" not in json.dumps(serialized)
     assert {component["component"] for component in serialized[-1]["components"]} >= {
-        "Card",
-        "Column",
-        "Text",
-        "ChoicePicker",
-        "Button",
+        "SegmentedChoiceCards",
     }
 
 
@@ -321,7 +318,7 @@ def test_low_confidence_document_observations_do_not_override_user_facts() -> No
     assert secured.uploaded_documents[0].metadata["requires_review"] is True
     assert "S-Corp" not in secured.candidate_entities
     component = _component_by_id(with_ui.a2ui_messages, "document_upload")
-    assert component.component == "ChoicePicker"
+    assert component.component == "SegmentedChoiceCards"
 
 
 def test_human_followup_updates_state_and_can_increase_confidence() -> None:

@@ -18,7 +18,7 @@ from google.genai import types
 
 from tax_concierge_agent import agent as agent_module
 from tax_concierge_agent.agent import app
-from tax_concierge_agent.models import FactExtraction, TaxIntake
+from tax_concierge_agent.models import FactExtraction, TAX_CONCIERGE_CATALOG_ID, TaxIntake
 
 
 @pytest.fixture(autouse=True)
@@ -78,9 +78,9 @@ async def test_workflow_requests_missing_fact() -> None:
         "updateComponents",
     ]
     assert all(message["surfaceId"] == "tax-intake" for message in messages)
-    assert all(message["catalogId"] == "basic" for message in messages)
+    assert all(message["catalogId"] == TAX_CONCIERGE_CATALOG_ID for message in messages)
     components = messages[-1]["components"]
-    assert any(component["component"] == "ChoicePicker" for component in components)
+    assert any(component["component"] == "SegmentedChoiceCards" for component in components)
 
 
 @pytest.mark.asyncio
@@ -121,4 +121,4 @@ async def test_workflow_quarantines_prompt_injection() -> None:
     messages = payload["messages"]
     assert all(message["surfaceId"] == "security-review" for message in messages)
     components = messages[-1]["components"]
-    assert any(component["id"] == "user_story" for component in components)
+    assert any(component["component"] == "SecurityReviewCard" for component in components)

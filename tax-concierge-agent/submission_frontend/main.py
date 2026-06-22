@@ -5,12 +5,14 @@ import json
 import os
 import re
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
 from fastapi import FastAPI, File, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import HTMLResponse, Response
+from fastapi.responses import FileResponse, HTMLResponse, Response
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 DEFAULT_USER_ID = "default-user"
@@ -18,6 +20,9 @@ READINESS_STILL_LEARNING = "Still learning"
 READINESS_NEEDS_CLARIFICATION = "Needs clarification"
 READINESS_READY = "Ready for recommendation"
 READINESS_SECURITY = "Security review required"
+A2UI_VERSION = "0.9.1"
+TAX_CONCIERGE_CATALOG_ID = "https://tax-concierge.local/catalogs/v1/tax-concierge.json"
+FRONTEND_DIST = Path(__file__).resolve().parent / "frontend" / "dist"
 
 
 class IntakeRequest(BaseModel):
@@ -250,11 +255,47 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+if (FRONTEND_DIST / "assets").exists():
+    app.mount("/assets", StaticFiles(directory=FRONTEND_DIST / "assets"), name="assets")
 
 
 @app.get("/", response_class=HTMLResponse)
-async def index() -> str:
-    return INDEX_HTML
+async def index() -> Response:
+    index_file = FRONTEND_DIST / "index.html"
+    if index_file.exists():
+        return FileResponse(index_file)
+    return HTMLResponse(_fallback_index_html())
+
+
+@app.get("/catalogs/v1/tax-concierge.json")
+async def tax_concierge_catalog() -> dict[str, Any]:
+    return {
+        "id": TAX_CONCIERGE_CATALOG_ID,
+        "version": "v1",
+        "a2uiVersion": A2UI_VERSION,
+        "components": [
+            "StoryInputCard",
+            "SegmentedChoiceCards",
+            "ConfirmedFactsRail",
+            "ReadinessStatus",
+            "WhyAskingDrawer",
+            "DocumentUploadCard",
+            "DocumentFieldReviewCard",
+            "SecurityReviewCard",
+            "RecommendationCard",
+        ],
+        "events": [
+            "submit_story",
+            "select_answer",
+            "toggle_chip",
+            "upload_document",
+            "confirm_document_field",
+            "open_why_asking",
+            "continue_intake",
+            "submit_security_review",
+            "continue_recommendation",
+        ],
+    }
 
 
 @app.get("/favicon.ico", include_in_schema=False)
@@ -481,31 +522,18 @@ def _build_a2ui_messages(state: SessionState) -> list[dict[str, Any]]:
             },
             [
                 {
-                    "id": "security_note",
-                    "component": "Card",
+                    "id": "security_card",
+                    "component": "SecurityReviewCard",
                     "props": {
-                        "tone": "warning",
                         "title": "Security review",
-                        "text": "Sensitive taxpayer information is redacted before model reasoning.",
-                    },
-                    "children": ["user_story", "security_submit"],
-                },
-                {
-                    "id": "user_story",
-                    "component": "TextField",
-                    "props": {
+                        "message": "Sensitive taxpayer information is redacted before model reasoning.",
                         "label": "Describe the business situation without sensitive taxpayer identifiers.",
                         "multiline": True,
                         "helperText": "Leave out SSNs, EINs, account numbers, and instructions to the assistant.",
                         "whyWeAreAsking": "I need a clean version of the business facts so the workflow can continue safely.",
                     },
                     "binding": {"path": "/taxIntake/answers/user_story"},
-                },
-                {
-                    "id": "security_submit",
-                    "component": "Button",
-                    "props": {"label": "Continue", "style": "primary"},
-                    "action": {"event": "submitSecurityReview", "payload": {"fieldId": "user_story"}},
+                    "action": {"event": "submit_security_review", "payload": {"fieldId": "user_story"}},
                 },
             ],
         )
@@ -526,19 +554,12 @@ def _build_a2ui_messages(state: SessionState) -> list[dict[str, Any]]:
                 [
                     {
                         "id": "recommendation_card",
-                        "component": "Card",
+                        "component": "RecommendationCard",
                         "props": {
-                            "tone": "success",
-                            "title": "We have a recommendation.",
-                            "text": state.explanation or "The key setup details are clear enough to continue.",
+                            "headline": "We have a recommendation.",
+                            "body": state.explanation or "The key setup details are clear enough to continue.",
                         },
-                        "children": ["recommendation_continue"],
-                    },
-                    {
-                        "id": "recommendation_continue",
-                        "component": "Button",
-                        "props": {"label": "Continue", "style": "primary"},
-                        "action": {"event": "continueRecommendation", "payload": {}},
+                        "action": {"event": "continue_recommendation", "payload": {}},
                     },
                 ],
             )
@@ -567,7 +588,7 @@ def _build_a2ui_messages(state: SessionState) -> list[dict[str, Any]]:
     component = labels[field_id]
     return _surface_messages(
         "tax-intake",
-        "followup_card",
+        field_id,
         {
             "taxIntake": {
                 "knownFacts": state.known_facts,
@@ -580,14 +601,8 @@ def _build_a2ui_messages(state: SessionState) -> list[dict[str, Any]]:
         },
         [
             {
-                "id": "followup_card",
-                "component": "Card",
-                "props": {"tone": "calm", "title": component["label"], "text": component["why"]},
-                "children": [field_id, "followup_submit"],
-            },
-            {
                 "id": field_id,
-                "component": "ChoicePicker",
+                "component": "SegmentedChoiceCards",
                 "props": {
                     "label": component["label"],
                     "options": [{"label": option, "value": option} for option in component["options"]],
@@ -595,14 +610,10 @@ def _build_a2ui_messages(state: SessionState) -> list[dict[str, Any]]:
                     "whyWeAreAsking": component["why"],
                     "readinessState": READINESS_NEEDS_CLARIFICATION,
                     "displayGroup": component["group"],
+                    "submitOnSelect": False,
                 },
                 "binding": {"path": f"/taxIntake/answers/{field_id}"},
-            },
-            {
-                "id": "followup_submit",
-                "component": "Button",
-                "props": {"label": "Continue", "style": "primary"},
-                "action": {"event": "submitFollowup", "payload": {"fieldId": field_id}},
+                "action": {"event": "select_answer", "payload": {"fieldId": field_id}},
             },
         ],
     )
@@ -631,24 +642,24 @@ def _surface_messages(
 ) -> list[dict[str, Any]]:
     return [
         {
-            "version": "0.9",
+            "version": A2UI_VERSION,
             "message": "createSurface",
             "surfaceId": surface_id,
-            "catalogId": "basic",
+            "catalogId": TAX_CONCIERGE_CATALOG_ID,
             "root": root,
         },
         {
-            "version": "0.9",
+            "version": A2UI_VERSION,
             "message": "updateDataModel",
             "surfaceId": surface_id,
-            "catalogId": "basic",
+            "catalogId": TAX_CONCIERGE_CATALOG_ID,
             "data": data,
         },
         {
-            "version": "0.9",
+            "version": A2UI_VERSION,
             "message": "updateComponents",
             "surfaceId": surface_id,
-            "catalogId": "basic",
+            "catalogId": TAX_CONCIERGE_CATALOG_ID,
             "components": components,
         },
     ]
@@ -836,544 +847,36 @@ def _find_unresolved_request_input(events: list[dict[str, Any]]) -> dict[str, An
     return None
 
 
-INDEX_HTML = r"""<!doctype html>
+def _fallback_index_html() -> str:
+    return """<!doctype html>
 <html lang="en">
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Tax Concierge</title>
-  <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;560;620;650;700&family=Outfit:wght@500;600;700&display=swap" rel="stylesheet">
   <style>
-    :root {
-      color-scheme: light;
-      --bg: oklch(0.985 0.006 353);
-      --bg-strong: oklch(1 0 0);
-      --surface: oklch(1 0 0 / 0.74);
-      --surface-solid: oklch(0.990 0.004 353);
-      --surface-raised: oklch(0.968 0.010 353 / 0.78);
-      --ink: oklch(0.205 0.028 260);
-      --muted: oklch(0.455 0.030 260);
-      --border: oklch(0.895 0.014 353 / 0.72);
-      --primary: oklch(0.540 0.135 353);
-      --primary-strong: oklch(0.450 0.140 353);
-      --primary-soft: oklch(0.940 0.035 353);
-      --accent: oklch(0.470 0.095 195);
-      --accent-soft: oklch(0.930 0.035 195);
-      --warning: oklch(0.620 0.105 78);
-      --danger: oklch(0.520 0.135 25);
-      --shadow: 0 18px 44px oklch(0.205 0.028 260 / 0.10);
-      --focus: 0 0 0 3px oklch(0.940 0.035 353), 0 0 0 5px oklch(0.540 0.135 353 / 0.22);
-      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-    }
-    * { box-sizing: border-box; }
     body {
       margin: 0;
-      min-height: 100vh;
-      color: var(--ink);
-      background:
-        radial-gradient(circle at 16% 10%, oklch(0.900 0.070 353 / 0.34), transparent 34rem),
-        radial-gradient(circle at 86% 16%, oklch(0.880 0.075 195 / 0.28), transparent 30rem),
-        linear-gradient(135deg, var(--bg), oklch(1 0 0));
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      background: oklch(1 0 0);
+      color: oklch(0.205 0.028 260);
     }
-    body::before {
-      content: "";
-      position: fixed;
-      inset: 0;
-      pointer-events: none;
-      background: radial-gradient(circle at 50% 100%, oklch(0.970 0.018 78 / 0.28), transparent 36rem);
-    }
-    button, textarea, input, select { font: inherit; }
-    button, .upload-label {
-      border: 0;
-      border-radius: 10px;
-      cursor: pointer;
-      transition: transform 180ms cubic-bezier(.16,1,.3,1), background 180ms cubic-bezier(.16,1,.3,1), border-color 180ms cubic-bezier(.16,1,.3,1);
-    }
-    button:focus-visible, textarea:focus-visible, input:focus-visible, select:focus-visible, .upload-label:focus-within {
-      outline: none;
-      box-shadow: var(--focus);
-    }
-    button:hover, .upload-label:hover { transform: translateY(-1px); }
-    button:disabled { cursor: not-allowed; opacity: .62; transform: none; }
-    .shell { width: min(1180px, calc(100% - 32px)); margin: 0 auto; padding: 34px 0 56px; position: relative; }
-    .topbar { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-bottom: 40px; }
-    .brand { display: flex; align-items: center; gap: 12px; font-weight: 700; }
-    .mark { width: 36px; height: 36px; border-radius: 12px; background: linear-gradient(135deg, var(--primary), var(--accent)); box-shadow: 0 10px 18px oklch(0.540 0.135 353 / .22); }
-    .session-pill { display: flex; align-items: center; gap: 8px; padding: 8px 12px; border: 1px solid var(--border); border-radius: 999px; background: oklch(1 0 0 / .55); color: var(--muted); font-size: 14px; backdrop-filter: blur(18px); }
-    .hero { display: grid; grid-template-columns: minmax(0, 1fr) 360px; gap: 28px; align-items: start; }
-    .hero-copy { padding: 16px 0 0; }
-    h1 { font-family: Outfit, Inter, sans-serif; margin: 0 0 14px; font-size: clamp(3rem, 8vw, 5.75rem); line-height: .94; letter-spacing: -0.035em; text-wrap: balance; }
-    .subhead { max-width: 720px; color: var(--muted); font-size: 20px; line-height: 1.55; margin: 0; text-wrap: pretty; }
-    .grid { display: grid; grid-template-columns: minmax(0, 1fr) 360px; gap: 28px; margin-top: 28px; align-items: start; }
-    .stack { display: grid; gap: 18px; }
-    .card {
-      border: 1px solid var(--border);
-      border-radius: 16px;
-      background: var(--surface);
-      backdrop-filter: blur(22px) saturate(130%);
-      box-shadow: var(--shadow);
+    main {
+      width: min(720px, calc(100% - 32px));
+      margin: 12vh auto;
+      border: 1px solid oklch(0.895 0.014 353);
+      border-radius: 14px;
+      background: oklch(0.985 0.006 353);
       padding: 24px;
     }
-    .card.soft { background: oklch(1 0 0 / .50); box-shadow: none; }
-    .card h2, .card h3 { margin: 0; letter-spacing: -0.01em; }
-    .card h2 { font-size: 24px; line-height: 1.2; }
-    .card h3 { font-size: 17px; line-height: 1.35; }
-    .helper { color: var(--muted); line-height: 1.55; margin: 8px 0 0; }
-    .story-input {
-      width: 100%;
-      min-height: 190px;
-      resize: vertical;
-      margin-top: 18px;
-      padding: 18px;
-      color: var(--ink);
-      background: oklch(1 0 0 / .78);
-      border: 1px solid var(--border);
-      border-radius: 14px;
-      line-height: 1.55;
-    }
-    .story-input::placeholder { color: oklch(0.405 0.030 260); }
-    .actions { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 16px; align-items: center; }
-    .primary { background: var(--primary); color: white; padding: 12px 18px; font-weight: 650; }
-    .primary:hover { background: var(--primary-strong); }
-    .secondary, .upload-label { background: oklch(1 0 0 / .62); color: var(--ink); border: 1px solid var(--border); padding: 11px 16px; font-weight: 620; }
-    .upload-label input { position: absolute; inline-size: 1px; block-size: 1px; opacity: 0; pointer-events: none; }
-    .status { display: inline-flex; align-items: center; gap: 7px; padding: 6px 10px; border-radius: 999px; font-size: 13px; font-weight: 650; background: var(--surface-raised); color: var(--muted); }
-    .status.ready, .status.confident { background: var(--accent-soft); color: var(--accent); }
-    .status.needs { background: var(--primary-soft); color: var(--primary); }
-    .status.security { background: oklch(0.940 0.045 25); color: var(--danger); }
-    .fact-list, .review-list { display: grid; gap: 10px; margin-top: 16px; }
-    .fact-row, .review-row, .missing-row {
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-      gap: 12px;
-      padding: 12px;
-      background: var(--surface-raised);
-      border: 1px solid oklch(0.895 0.014 353 / .55);
-      border-radius: 12px;
-    }
-    .empty { color: var(--muted); background: var(--surface-raised); border-radius: 12px; padding: 14px; line-height: 1.5; margin-top: 14px; }
-    .journey { display: grid; gap: 12px; margin-top: 16px; }
-    .step { display: grid; grid-template-columns: 24px 1fr; gap: 10px; align-items: center; color: var(--muted); }
-    .dot { width: 12px; height: 12px; border-radius: 50%; background: oklch(0.820 0.018 260); margin-left: 6px; }
-    .step.active { color: var(--ink); font-weight: 650; }
-    .step.active .dot { background: var(--primary); box-shadow: 0 0 0 5px oklch(0.940 0.035 353); }
-    .step.done .dot { background: var(--accent); }
-    .a2ui { display: grid; gap: 14px; margin-top: 16px; }
-    .choice-group { display: grid; gap: 10px; }
-    .choice { display: flex; gap: 10px; align-items: center; padding: 12px; border: 1px solid var(--border); border-radius: 12px; background: oklch(1 0 0 / .56); cursor: pointer; }
-    .choice:has(input:checked) { border-color: oklch(0.540 0.135 353 / .55); background: var(--primary-soft); }
-    .why-button { margin-top: 2px; color: var(--primary); background: transparent; padding: 0; font-weight: 650; }
-    .privacy { display: flex; gap: 12px; align-items: flex-start; }
-    .privacy-icon { width: 34px; height: 34px; flex: 0 0 auto; display: grid; place-items: center; border-radius: 11px; background: var(--accent-soft); color: var(--accent); font-weight: 800; }
-    .debug { margin-top: 16px; }
-    pre { overflow: auto; max-height: 420px; padding: 16px; border-radius: 12px; background: oklch(0.205 0.028 260); color: oklch(0.985 0.006 353); font-size: 12px; line-height: 1.5; }
-    .toast-wrap { position: fixed; right: 20px; bottom: 20px; display: grid; gap: 10px; z-index: 30; }
-    .toast { padding: 12px 14px; border-radius: 12px; color: var(--ink); background: oklch(1 0 0 / .86); border: 1px solid var(--border); box-shadow: var(--shadow); backdrop-filter: blur(18px); }
-    .drawer-backdrop { position: fixed; inset: 0; background: oklch(0.205 0.028 260 / .28); display: none; z-index: 20; }
-    .drawer-backdrop.open { display: block; }
-    .drawer { position: fixed; inset: 0 0 0 auto; width: min(440px, 100%); padding: 28px; background: oklch(1 0 0 / .90); backdrop-filter: blur(24px); transform: translateX(100%); visibility: hidden; transition: transform 220ms cubic-bezier(.16,1,.3,1), visibility 0ms linear 220ms; z-index: 21; border-left: 1px solid var(--border); }
-    .drawer.open { transform: translateX(0); visibility: visible; transition: transform 220ms cubic-bezier(.16,1,.3,1); }
-    .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0,0,0,0); border: 0; }
-    .spinner { width: 16px; height: 16px; border-radius: 50%; border: 2px solid oklch(1 0 0 / .5); border-top-color: white; display: inline-block; animation: spin 800ms linear infinite; vertical-align: -3px; margin-right: 8px; }
-    @keyframes spin { to { transform: rotate(360deg); } }
-    @media (max-width: 900px) {
-      .hero, .grid { grid-template-columns: 1fr; }
-      .hero-copy { padding-top: 0; }
-      h1 { font-size: clamp(3rem, 15vw, 4.25rem); }
-    }
-    @media (prefers-reduced-motion: reduce) {
-      *, *::before, *::after { animation-duration: .001ms !important; animation-iteration-count: 1 !important; transition-duration: .001ms !important; scroll-behavior: auto !important; }
-    }
+    h1 { margin: 0 0 8px; font-size: 1.5rem; }
+    p { margin: 0; color: oklch(0.455 0.030 260); line-height: 1.55; }
   </style>
 </head>
 <body>
-  <div class="shell">
-    <header class="topbar">
-      <div class="brand"><div class="mark" aria-hidden="true"></div><span>Tax Concierge</span></div>
-      <div class="session-pill"><span id="runtimeDot">●</span><span id="sessionLabel">No session yet</span></div>
-    </header>
-
-    <main>
-      <section class="hero">
-        <div class="hero-copy">
-          <h1>Come as you are.</h1>
-          <p class="subhead">Tell us about your business or upload what you have. We’ll figure out the next step together.</p>
-        </div>
-        <aside class="card privacy">
-          <div class="privacy-icon" aria-hidden="true">✓</div>
-          <div>
-            <h3>Private by design</h3>
-            <p class="helper">Sensitive taxpayer information is redacted before model reasoning. We show security events calmly and ask for a cleaner version when needed.</p>
-          </div>
-        </aside>
-      </section>
-
-      <section class="grid" aria-label="Tax Concierge intake">
-        <div class="stack">
-          <section class="card">
-            <h2>Tell us about your business.</h2>
-            <p class="helper">Use your own words. You do not need to know the right tax terms.</p>
-            <label class="sr-only" for="story">Business story</label>
-            <textarea id="story" class="story-input" placeholder="Example: I started an LLC last year, I’m the only owner, and I received 1099 income. I’m not sure what return I need."></textarea>
-            <div class="actions">
-              <button id="submitStory" class="primary">Continue</button>
-              <label class="upload-label">Upload a document<input id="fileInput" type="file" /></label>
-            </div>
-          </section>
-
-          <section class="card" id="understandingCard">
-            <h2>We think we understand the following</h2>
-            <p class="helper">You can correct anything. We will only move forward when the important pieces are clear.</p>
-            <div id="facts" class="fact-list"></div>
-          </section>
-
-          <section class="card" id="followupCard">
-            <h2>Next question</h2>
-            <div id="a2ui" class="a2ui"></div>
-          </section>
-
-          <section class="card" id="recommendationCard">
-            <h2>We have a recommendation.</h2>
-            <div id="recommendationBody" class="empty">When the key facts are clear, the recommendation will appear here with the assumptions that shaped it.</div>
-          </section>
-        </div>
-
-        <aside class="stack">
-          <section class="card soft">
-            <h3>Progress</h3>
-            <div id="readiness" style="margin-top:12px"></div>
-            <div class="journey" id="journey"></div>
-          </section>
-
-          <section class="card soft">
-            <h3>Missing facts</h3>
-            <div id="missingFacts"></div>
-          </section>
-
-          <section class="card soft">
-            <h3>Document review</h3>
-            <div id="docReview" class="review-list"></div>
-          </section>
-
-          <section class="card soft">
-            <h3>Security events</h3>
-            <div id="securityEvents"></div>
-          </section>
-
-          <section class="card soft debug">
-            <label class="choice"><input type="checkbox" id="debugToggle" /> Show developer state</label>
-            <pre id="debugState" hidden></pre>
-          </section>
-        </aside>
-      </section>
-    </main>
-  </div>
-
-  <div id="drawerBackdrop" class="drawer-backdrop"></div>
-  <aside id="drawer" class="drawer" aria-label="Why we are asking this" aria-hidden="true">
-    <button class="secondary" id="closeDrawer">Close</button>
-    <h2 style="margin-top:24px">Why we’re asking</h2>
-    <p id="drawerText" class="helper"></p>
-  </aside>
-  <div id="toasts" class="toast-wrap" aria-live="polite"></div>
-
-  <script>
-    const state = { session: null, busy: false, surfaces: {} };
-    const $ = (id) => document.getElementById(id);
-
-    function toast(message) {
-      const el = document.createElement("div");
-      el.className = "toast";
-      el.textContent = message;
-      $("toasts").appendChild(el);
-      setTimeout(() => el.remove(), 3600);
-    }
-
-    async function api(path, options = {}) {
-      const res = await fetch(path, options);
-      if (!res.ok) throw new Error(await res.text());
-      return res.json();
-    }
-
-    function setBusy(button, busy, label) {
-      button.disabled = busy;
-      button.innerHTML = busy ? `<span class="spinner"></span>${label}` : label;
-    }
-
-    $("submitStory").addEventListener("click", async () => {
-      const story = $("story").value.trim();
-      if (!story) return toast("Tell us a little about the business first.");
-      setBusy($("submitStory"), true, "Working");
-      try {
-        state.session = await api("/api/intake", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ session_id: state.session?.session_id, user_story: story })
-        });
-        render();
-        toast("I organized what we know so far.");
-      } catch (err) {
-        toast("Could not reach the workflow. The local fallback is still available.");
-      } finally {
-        setBusy($("submitStory"), false, "Continue");
-      }
-    });
-
-    $("fileInput").addEventListener("change", async (event) => {
-      const file = event.target.files[0];
-      if (!file) return;
-      const form = new FormData();
-      form.append("file", file);
-      const suffix = state.session?.session_id ? `?session_id=${encodeURIComponent(state.session.session_id)}` : "";
-      try {
-        state.session = await api(`/api/upload${suffix}`, { method: "POST", body: form });
-        render();
-        toast("Document details are ready for review.");
-      } catch (err) {
-        toast("Upload failed. Try a smaller or simpler file.");
-      } finally {
-        event.target.value = "";
-      }
-    });
-
-    $("debugToggle").addEventListener("change", render);
-    $("closeDrawer").addEventListener("click", closeDrawer);
-    $("drawerBackdrop").addEventListener("click", closeDrawer);
-
-    function openDrawer(text) {
-      $("drawerText").textContent = text || "This answer helps narrow the next step.";
-      $("drawer").classList.add("open");
-      $("drawer").setAttribute("aria-hidden", "false");
-      $("drawerBackdrop").classList.add("open");
-    }
-    function closeDrawer() {
-      $("drawer").classList.remove("open");
-      $("drawer").setAttribute("aria-hidden", "true");
-      $("drawerBackdrop").classList.remove("open");
-    }
-
-    async function submitA2UI(surface) {
-      const answers = {};
-      for (const input of document.querySelectorAll("#a2ui [data-binding-path]")) {
-        const fieldId = fieldFromPath(input.dataset.bindingPath);
-        if (!fieldId) continue;
-        const checked = [...document.querySelectorAll(`#a2ui [data-binding-path="${input.dataset.bindingPath}"]:checked`)];
-        if (checked.length > 1) {
-          answers[fieldId] = checked.map(item => item.value);
-        } else if (checked.length === 1) {
-          answers[fieldId] = checked[0].value;
-        } else {
-          answers[fieldId] = input.value;
-        }
-      }
-      if (!Object.values(answers).some(Boolean)) return toast("Choose an answer before continuing.");
-      try {
-        state.session = await api(`/api/action/${state.session.session_id}`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ answers })
-        });
-        render();
-        toast("Answer saved.");
-      } catch (err) {
-        toast("Could not resume the paused workflow.");
-      }
-    }
-
-    function render() {
-      const s = state.session || {};
-      $("sessionLabel").textContent = s.session_id ? `Session ${s.session_id.slice(0, 8)}` : "No session yet";
-      $("runtimeDot").style.color = s.runtime_available ? "var(--accent)" : "var(--warning)";
-      $("readiness").innerHTML = `<span class="status ${statusClass(s.readiness_state)}">${s.readiness_state || "Still learning"}</span>`;
-      renderJourney(s.readiness_state);
-      renderFacts(s);
-      renderMissing(s);
-      renderA2UISurface(s.a2ui_messages || []);
-      renderDocs(s.document_review_items || []);
-      renderSecurity(s.security_flags || [], s.redacted_categories || []);
-      renderRecommendation(s);
-      $("debugState").hidden = !$("debugToggle").checked;
-      $("debugState").textContent = JSON.stringify(s, null, 2);
-    }
-
-    function statusClass(label = "") {
-      if (label.includes("Ready") || label.includes("Confident")) return "ready";
-      if (label.includes("Security")) return "security";
-      if (label.includes("Needs")) return "needs";
-      return "";
-    }
-
-    function renderJourney(readiness = "Still learning") {
-      const steps = ["Still learning", "Needs clarification", "Ready for recommendation"];
-      const index = readiness.includes("Ready") ? 2 : readiness.includes("Needs") ? 1 : 0;
-      $("journey").innerHTML = steps.map((step, i) => `<div class="step ${i < index ? "done" : i === index ? "active" : ""}"><span class="dot"></span><span>${step}</span></div>`).join("");
-    }
-
-    function renderFacts(s) {
-      const entries = Object.entries(s.known_facts || {});
-      $("facts").innerHTML = entries.length ? entries.map(([key, value]) => `<div class="fact-row"><div><strong>${pretty(key)}</strong><div class="helper">${value}</div></div><span class="status confident">Confident</span></div>`).join("") : `<div class="empty">Tell us your story or upload a document, and we’ll reflect back what we understand.</div>`;
-    }
-
-    function renderMissing(s) {
-      const missing = s.missing_facts || [];
-      $("missingFacts").innerHTML = missing.length ? `<div class="fact-list">${missing.map(item => `<div class="missing-row"><span>${pretty(item)}</span><span class="status needs">Needs clarification</span></div>`).join("")}</div>` : `<div class="empty">No missing facts are blocking the next step.</div>`;
-    }
-
-    function renderA2UISurface(messages) {
-      applyA2UIMessages(messages || []);
-      const surface = activeSurface();
-      if (!surface || !(surface.components || []).length) {
-        $("a2ui").innerHTML = `<div class="empty">Follow-up questions will appear here one at a time.</div>`;
-        return;
-      }
-      const componentMap = Object.fromEntries((surface.components || []).map(component => [component.id, component]));
-      const root = componentMap[surface.root] ? surface.root : surface.components[0]?.id;
-      const body = [renderComponentById(root, componentMap)];
-      const whyText = (surface.components || []).map(component => component.props?.whyWeAreAsking).find(Boolean)
-        || surface.data?.taxIntake?.explanation;
-      if (whyText) body.push(`<button class="why-button" type="button" id="whyBtn">Why we’re asking</button>`);
-      $("a2ui").innerHTML = body.join("");
-      if ($("whyBtn")) $("whyBtn").addEventListener("click", () => openDrawer(whyText));
-      if ($("answerBtn")) $("answerBtn").addEventListener("click", () => submitA2UI(surface));
-    }
-
-    function applyA2UIMessages(messages) {
-      for (const message of messages) {
-        const id = message.surfaceId || message.surface_id;
-        if (!id) continue;
-        if (message.message === "deleteSurface") {
-          delete state.surfaces[id];
-          continue;
-        }
-        const surface = state.surfaces[id] || { surfaceId: id, catalogId: message.catalogId || "basic", root: null, data: {}, components: [] };
-        if (message.message === "createSurface") {
-          surface.catalogId = message.catalogId || surface.catalogId;
-          surface.root = message.root || surface.root;
-        }
-        if (message.message === "updateDataModel") {
-          surface.data = { ...surface.data, ...(message.data || {}) };
-        }
-        if (message.message === "updateComponents") {
-          surface.components = message.components || [];
-        }
-        state.surfaces[id] = surface;
-      }
-    }
-
-    function activeSurface() {
-      const order = ["security-review", "tax-intake", "document-review", "recommendation"];
-      for (const id of order) {
-        const surface = state.surfaces[id];
-        if (surface && (surface.components || []).length) return surface;
-      }
-      return Object.values(state.surfaces).find(surface => (surface.components || []).length);
-    }
-
-    function renderComponentById(id, componentMap) {
-      const component = componentMap[id];
-      if (!component) return "";
-      return renderComponent(component, componentMap);
-    }
-
-    function renderComponent(component, componentMap) {
-      const props = component.props || {};
-      const children = (component.children || []).map(id => renderComponentById(id, componentMap)).join("");
-      if (component.component === "Card") {
-        return `<div class="review-row"><div>${props.title ? `<strong>${escapeHtml(props.title)}</strong>` : ""}${props.text ? `<div class="helper">${escapeHtml(props.text)}</div>` : ""}${children}</div></div>`;
-      }
-      if (component.component === "Column") return `<div class="stack">${children}</div>`;
-      if (component.component === "Text") {
-        const tag = props.variant === "title" ? "h3" : "p";
-        const cls = props.variant === "body" ? "helper" : "";
-        return `<${tag} class="${cls}">${escapeHtml(props.text || "")}</${tag}>`;
-      }
-      if (component.component === "ChoicePicker") {
-        const binding = component.binding?.path || "";
-        const options = props.options || [];
-        return `<div><div class="helper">${escapeHtml(props.label || "")}</div><div class="choice-group" role="radiogroup" aria-label="${escapeHtml(props.label || component.id)}">${options.map(option => `<label class="choice"><input type="radio" name="${component.id}" data-binding-path="${escapeHtml(binding)}" value="${escapeHtml(option.value ?? option.label ?? option)}" /> ${escapeHtml(option.label ?? option.value ?? option)}</label>`).join("")}</div>${componentMeta(props)}</div>`;
-      }
-      if (component.component === "TextField") {
-        const binding = component.binding?.path || "";
-        const label = props.label || component.id;
-        const placeholder = props.placeholder || props.helperText || label;
-        if (props.multiline) {
-          return `<label class="sr-only" for="${component.id}">${escapeHtml(label)}</label><textarea id="${component.id}" name="${component.id}" data-binding-path="${escapeHtml(binding)}" class="story-input" style="min-height:130px" placeholder="${escapeHtml(placeholder)}"></textarea>${componentMeta(props)}`;
-        }
-        return `<label class="sr-only" for="${component.id}">${escapeHtml(label)}</label><input id="${component.id}" name="${component.id}" data-binding-path="${escapeHtml(binding)}" class="story-input" style="min-height:auto" placeholder="${escapeHtml(placeholder)}" />${componentMeta(props)}`;
-      }
-      if (component.component === "CheckBox") {
-        const binding = component.binding?.path || "";
-        return `<label class="choice"><input type="checkbox" name="${component.id}" data-binding-path="${escapeHtml(binding)}" value="true" /> ${escapeHtml(props.label || component.id)}</label>${componentMeta(props)}`;
-      }
-      if (component.component === "Button") {
-        return `<div class="actions"><button class="${props.style === "primary" ? "primary" : ""}" id="answerBtn" type="button">${escapeHtml(props.label || "Continue")}</button></div>`;
-      }
-      return children || "";
-    }
-
-    function componentMeta(props) {
-      const bits = [];
-      if (props.readinessState) bits.push(`<span class="status ${statusClass(props.readinessState)}">${escapeHtml(props.readinessState)}</span>`);
-      if (props.displayGroup) bits.push(`<small>${escapeHtml(props.displayGroup)}</small>`);
-      if (!bits.length && !props.helperText) return "";
-      return `<div class="helper">${escapeHtml(props.helperText || "")}</div><div class="actions" style="margin-top:10px">${bits.join("")}</div>`;
-    }
-
-    function fieldFromPath(path = "") {
-      return String(path).split("/").filter(Boolean).pop();
-    }
-
-    function escapeHtml(value = "") {
-      return String(value)
-        .replaceAll("&", "&amp;")
-        .replaceAll("<", "&lt;")
-        .replaceAll(">", "&gt;")
-        .replaceAll('"', "&quot;")
-        .replaceAll("'", "&#039;");
-    }
-
-    function renderDocs(items) {
-      if (!items.length) {
-        $("docReview").innerHTML = `<div class="empty">Uploaded document details will appear as editable review cards. We never show raw OCR by default.</div>`;
-        return;
-      }
-      const reliable = items.filter(item => !item.needs_review);
-      const review = items.filter(item => item.needs_review);
-      $("docReview").innerHTML = `${section("Looks reliable", reliable)}${section("Needs your review", review)}`;
-    }
-
-    function section(title, rows) {
-      if (!rows.length) return "";
-      return `<h3 style="margin-top:14px">${title}</h3>${rows.map(item => `<div class="review-row"><div><strong>${item.field_label}</strong><div class="helper">${item.extracted_value}</div><small>${item.explanation}</small></div><span class="status ${item.needs_review ? "needs" : "confident"}">${item.confidence_state}</span></div>`).join("")}`;
-    }
-
-    function renderSecurity(flags, redacted) {
-      if (!flags.length && !redacted.length) {
-        $("securityEvents").innerHTML = `<div class="empty">No security events. Sensitive identifiers are still checked before model reasoning.</div>`;
-        return;
-      }
-      $("securityEvents").innerHTML = `<div class="fact-list">${[...flags, ...redacted.map(x => `Redacted ${x}`)].map(item => `<div class="missing-row"><span>${item}</span><span class="status security">Review</span></div>`).join("")}</div>`;
-    }
-
-    function renderRecommendation(s) {
-      if (!s.recommendation) {
-        $("recommendationBody").className = "empty";
-        $("recommendationBody").innerHTML = "When the key facts are clear, the recommendation will appear here with the assumptions that shaped it.";
-        return;
-      }
-      $("recommendationBody").className = "fact-list";
-      $("recommendationBody").innerHTML = `<div class="fact-row"><div><strong>Business type</strong><div class="helper">${s.recommendation}</div></div><span class="status ready">Ready</span></div><div class="fact-row"><div><strong>Why</strong><div class="helper">${s.explanation || "The answer is based on the facts you confirmed."}</div></div></div><div class="fact-row"><div><strong>Assumptions</strong><div class="helper">${Object.entries(s.known_facts || {}).map(([k,v]) => `${pretty(k)}: ${v}`).join("; ")}</div></div></div><div class="actions"><button class="primary">Continue</button></div>`;
-    }
-
-    function pretty(key) {
-      return key.replaceAll("_", " ").replace(/\b\w/g, c => c.toUpperCase());
-    }
-
-    render();
-  </script>
+  <main>
+    <h1>Tax Concierge frontend build missing</h1>
+    <p>Run the React frontend build in <code>submission_frontend/frontend</code>, then restart this service.</p>
+  </main>
 </body>
-</html>
-"""
+</html>"""

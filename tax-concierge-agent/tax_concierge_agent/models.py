@@ -19,6 +19,9 @@ ReadinessState = Literal[
     "Security review required",
 ]
 
+TAX_CONCIERGE_A2UI_VERSION = "0.9.1"
+TAX_CONCIERGE_CATALOG_ID = "https://tax-concierge.local/catalogs/v1/tax-concierge.json"
+
 A2UIMessageKind = Literal[
     "createSurface",
     "updateDataModel",
@@ -54,10 +57,10 @@ class A2UIComponent(BaseModel):
 class A2UIMessage(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
-    version: str = "0.9"
+    version: str = TAX_CONCIERGE_A2UI_VERSION
     message: A2UIMessageKind
     surface_id: str = Field(alias="surfaceId")
-    catalog_id: str = Field(default="basic", alias="catalogId")
+    catalog_id: str = Field(default=TAX_CONCIERGE_CATALOG_ID, alias="catalogId")
     root: str | None = None
     data: dict[str, Any] | None = None
     components: list[A2UIComponent] | None = None

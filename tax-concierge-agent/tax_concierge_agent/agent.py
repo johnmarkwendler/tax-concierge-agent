@@ -23,6 +23,7 @@ from .models import (
     HumanInputResponse,
     TaxIntake,
     TaxWorkflowInput,
+    TAX_CONCIERGE_CATALOG_ID,
 )
 from .routing import (
     compute_confidence,
@@ -102,7 +103,7 @@ def route_entities(node_input: TaxIntake) -> Event:
 def generate_a2ui_surface(node_input: TaxIntake) -> Event:
     missing_facts = missing_facts_for_candidates(node_input)
     confidence = compute_confidence(node_input.model_copy(update={"missing_facts": missing_facts}))
-    a2ui_messages = _build_a2ui_followup_messages(missing_facts, node_input.explanation)
+    a2ui_messages = _build_a2ui_followup_messages(node_input, missing_facts, node_input.explanation)
     intake = node_input.model_copy(
         update={
             "missing_facts": missing_facts,
@@ -140,7 +141,7 @@ def final_recommendation(node_input: TaxIntake):
 
 def request_missing_fact(node_input: TaxIntake):
     messages = node_input.a2ui_messages or _build_a2ui_followup_messages(
-        node_input.missing_facts, node_input.explanation
+        node_input, node_input.missing_facts, node_input.explanation
     )
     explanation = _surface_explanation(messages)
     yield RequestInput(
@@ -300,7 +301,7 @@ def _parse_json_or_story(text: str) -> dict[str, Any]:
 
 
 def _build_a2ui_followup_messages(
-    missing_facts: list[str], explanation: str | None
+    node_input: TaxIntake, missing_facts: list[str], explanation: str | None
 ) -> list[A2UIMessage]:
     first_missing = missing_facts[0] if missing_facts else "entity_type_hint"
     component_by_fact = {
@@ -384,56 +385,19 @@ def _build_a2ui_followup_messages(
     )
     return _surface_messages(
         surface_id="tax-intake",
-        root="followup_card",
+        root=first_missing,
         data={
             "taxIntake": {
+                "knownFacts": node_input.known_facts,
                 "missingFacts": missing_facts,
+                "candidateEntities": node_input.candidate_entities,
                 "readinessState": "Needs clarification",
                 "explanation": explanation
                 or "I need one more fact before recommending the most likely tax path.",
                 "answers": {},
             }
         },
-        components=[
-            A2UIComponent(
-                id="followup_card",
-                component="Card",
-                props={"tone": "calm", "title": "One more business detail"},
-                children=["followup_stack"],
-            ),
-            A2UIComponent(
-                id="followup_stack",
-                component="Column",
-                props={"gap": "comfortable"},
-                children=[
-                    "followup_title",
-                    "followup_explanation",
-                    *[component.id for component in question_components],
-                    "followup_submit",
-                ],
-            ),
-            A2UIComponent(
-                id="followup_title",
-                component="Text",
-                props={"text": "One more business detail", "variant": "title"},
-            ),
-            A2UIComponent(
-                id="followup_explanation",
-                component="Text",
-                props={
-                    "text": explanation
-                    or "I need one more fact before recommending the most likely tax path.",
-                    "variant": "body",
-                },
-            ),
-            *question_components,
-            A2UIComponent(
-                id="followup_submit",
-                component="Button",
-                props={"label": "Continue", "style": "primary"},
-                action=A2UIAction(event="submitFollowup", payload={"fieldId": first_missing}),
-            ),
-        ],
+        components=question_components,
     )
 
 
@@ -446,21 +410,18 @@ def _choice_question(
 ) -> list[A2UIComponent]:
     return [
         A2UIComponent(
-            id=f"{field_id}_question",
-            component="Text",
-            props={"text": label, "variant": "question"},
-        ),
-        A2UIComponent(
             id=field_id,
-            component="ChoicePicker",
+            component="SegmentedChoiceCards",
             props={
                 "label": label,
                 "options": [{"label": option, "value": option} for option in options],
                 "helperText": helper_text,
                 "whyWeAreAsking": why,
                 "readinessState": "Needs clarification",
+                "submitOnSelect": False,
             },
             binding=A2UIBinding(path=f"/taxIntake/answers/{field_id}"),
+            action=A2UIAction(event="select_answer", payload={"fieldId": field_id}),
         ),
     ]
 
@@ -480,35 +441,10 @@ def _build_security_review_messages(explanation: str) -> list[A2UIMessage]:
         components=[
             A2UIComponent(
                 id="security_card",
-                component="Card",
-                props={"tone": "warning", "title": "Security review required"},
-                children=["security_stack"],
-            ),
-            A2UIComponent(
-                id="security_stack",
-                component="Column",
-                props={"gap": "comfortable"},
-                children=[
-                    "security_title",
-                    "security_explanation",
-                    "user_story",
-                    "security_submit",
-                ],
-            ),
-            A2UIComponent(
-                id="security_title",
-                component="Text",
-                props={"text": "Security review required", "variant": "title"},
-            ),
-            A2UIComponent(
-                id="security_explanation",
-                component="Text",
-                props={"text": explanation, "variant": "body"},
-            ),
-            A2UIComponent(
-                id="user_story",
-                component="TextField",
+                component="SecurityReviewCard",
                 props={
+                    "title": "Security review required",
+                    "message": explanation,
                     "label": "Describe the business tax situation without instructions to the assistant.",
                     "multiline": True,
                     "helperText": "Do not include account numbers, SSNs, addresses, or instructions such as ignore rules.",
@@ -518,12 +454,7 @@ def _build_security_review_messages(explanation: str) -> list[A2UIMessage]:
                     ),
                 },
                 binding=A2UIBinding(path="/taxIntake/answers/user_story"),
-            ),
-            A2UIComponent(
-                id="security_submit",
-                component="Button",
-                props={"label": "Continue", "style": "primary"},
-                action=A2UIAction(event="submitSecurityReview", payload={"fieldId": "user_story"}),
+                action=A2UIAction(event="submit_security_review", payload={"fieldId": "user_story"}),
             ),
         ],
     )
@@ -547,31 +478,9 @@ def _build_recommendation_a2ui_messages(
         components=[
             A2UIComponent(
                 id="recommendation_card",
-                component="Card",
-                props={"tone": "success", "title": "We have a recommendation."},
-                children=["recommendation_stack"],
-            ),
-            A2UIComponent(
-                id="recommendation_stack",
-                component="Column",
-                props={"gap": "comfortable"},
-                children=["recommendation_title", "recommendation_body", "recommendation_continue"],
-            ),
-            A2UIComponent(
-                id="recommendation_title",
-                component="Text",
-                props={"text": "We have a recommendation.", "variant": "title"},
-            ),
-            A2UIComponent(
-                id="recommendation_body",
-                component="Text",
-                props={"text": summary, "variant": "body"},
-            ),
-            A2UIComponent(
-                id="recommendation_continue",
-                component="Button",
-                props={"label": "Continue", "style": "primary"},
-                action=A2UIAction(event="continueRecommendation", payload={}),
+                component="RecommendationCard",
+                props={"headline": "We have a recommendation.", "body": summary},
+                action=A2UIAction(event="continue_recommendation", payload={}),
             ),
         ],
     )
@@ -584,12 +493,22 @@ def _surface_messages(
     components: list[A2UIComponent],
 ) -> list[A2UIMessage]:
     return [
-        A2UIMessage(message="createSurface", surfaceId=surface_id, catalogId="basic", root=root),
-        A2UIMessage(message="updateDataModel", surfaceId=surface_id, catalogId="basic", data=data),
+        A2UIMessage(
+            message="createSurface",
+            surfaceId=surface_id,
+            catalogId=TAX_CONCIERGE_CATALOG_ID,
+            root=root,
+        ),
+        A2UIMessage(
+            message="updateDataModel",
+            surfaceId=surface_id,
+            catalogId=TAX_CONCIERGE_CATALOG_ID,
+            data=data,
+        ),
         A2UIMessage(
             message="updateComponents",
             surfaceId=surface_id,
-            catalogId="basic",
+            catalogId=TAX_CONCIERGE_CATALOG_ID,
             components=components,
         ),
     ]
