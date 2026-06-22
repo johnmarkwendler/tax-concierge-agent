@@ -70,7 +70,7 @@ def normalize_event_to_intake(
             "user_story": user_story,
             "uploaded_documents": uploaded_documents,
             "known_facts": known_facts,
-            "next_ui": None,
+            "a2ui_messages": [],
         }
     )
 

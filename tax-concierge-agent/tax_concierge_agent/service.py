@@ -250,14 +250,24 @@ def _latest_request_input(events: list[Any]) -> dict[str, Any] | None:
                 continue
             args = function_call.args or {}
             payload = args.get("payload") or {}
-            components = payload.get("components") or []
+            messages = payload.get("messages") or []
             return {
                 "interrupt_id": args.get("interruptId") or args.get("interrupt_id"),
                 "invocation_id": getattr(event, "invocation_id", None),
                 "message": args.get("message"),
                 "payload": payload,
-                "field_id": components[0].get("id") if components else None,
+                "field_id": _field_id_from_a2ui_messages(messages),
             }
+    return None
+
+
+def _field_id_from_a2ui_messages(messages: list[dict[str, Any]]) -> str | None:
+    for message in messages:
+        for component in message.get("components") or []:
+            binding = component.get("binding") or {}
+            path = binding.get("path")
+            if path:
+                return str(path).rstrip("/").split("/")[-1]
     return None
 
 

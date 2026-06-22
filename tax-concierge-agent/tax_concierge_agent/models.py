@@ -1,6 +1,6 @@
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 EntityPath = Literal[
     "Sole Proprietor",
@@ -12,13 +12,55 @@ EntityPath = Literal[
 ]
 
 
-UIComponentType = Literal[
-    "radio",
-    "select",
-    "text_input",
-    "date_input",
-    "document_upload",
+ReadinessState = Literal[
+    "Still learning",
+    "Needs clarification",
+    "Ready for recommendation",
+    "Security review required",
 ]
+
+A2UIMessageKind = Literal[
+    "createSurface",
+    "updateDataModel",
+    "updateComponents",
+    "deleteSurface",
+]
+
+
+class A2UIBinding(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    path: str
+
+
+class A2UIAction(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    event: str
+    payload: dict[str, Any] = Field(default_factory=dict)
+
+
+class A2UIComponent(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    id: str
+    component: str
+    props: dict[str, Any] = Field(default_factory=dict)
+    children: list[str] = Field(default_factory=list)
+    binding: A2UIBinding | None = None
+    action: A2UIAction | None = None
+
+
+class A2UIMessage(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    version: str = "0.9"
+    message: A2UIMessageKind
+    surface_id: str = Field(alias="surfaceId")
+    catalog_id: str = Field(default="basic", alias="catalogId")
+    root: str | None = None
+    data: dict[str, Any] | None = None
+    components: list[A2UIComponent] | None = None
 
 
 class UploadedDocument(BaseModel):
@@ -30,23 +72,6 @@ class UploadedDocument(BaseModel):
     metadata: dict[str, Any] = Field(default_factory=dict)
 
 
-class UIComponent(BaseModel):
-    id: str
-    type: UIComponentType
-    label: str
-    options: list[str] = Field(default_factory=list)
-    required: bool = True
-    helper_text: str | None = None
-
-
-class NextUI(BaseModel):
-    schema_version: str = "a2ui-lite/v1"
-    title: str
-    explanation: str
-    components: list[UIComponent]
-    submit_label: str = "Continue"
-
-
 class TaxIntake(BaseModel):
     user_story: str
     uploaded_documents: list[UploadedDocument] = Field(default_factory=list)
@@ -56,7 +81,7 @@ class TaxIntake(BaseModel):
         default_factory=lambda: ["Cannot Determine Yet"]
     )
     confidence: float = Field(default=0.0, ge=0.0, le=1.0)
-    next_ui: NextUI | None = None
+    a2ui_messages: list[A2UIMessage] = Field(default_factory=list)
     explanation: str | None = None
     risk_flags: list[str] = Field(default_factory=list)
     recommendation_summary: str | None = None

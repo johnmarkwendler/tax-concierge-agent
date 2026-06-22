@@ -71,8 +71,16 @@ async def test_workflow_requests_missing_fact() -> None:
 
     assert request_input_calls, "Expected a RequestInput function call"
     payload = request_input_calls[0].args["payload"]
-    assert payload["schema_version"] == "a2ui-lite/v1"
-    assert payload["components"][0]["type"] in {"radio", "select", "text_input"}
+    messages = payload["messages"]
+    assert [message["message"] for message in messages] == [
+        "createSurface",
+        "updateDataModel",
+        "updateComponents",
+    ]
+    assert all(message["surfaceId"] == "tax-intake" for message in messages)
+    assert all(message["catalogId"] == "basic" for message in messages)
+    components = messages[-1]["components"]
+    assert any(component["component"] == "ChoicePicker" for component in components)
 
 
 @pytest.mark.asyncio
@@ -110,5 +118,7 @@ async def test_workflow_quarantines_prompt_injection() -> None:
     assert request_input_calls, "Expected a security RequestInput function call"
     assert request_input_calls[0].args["interruptId"] == "security_clean_input"
     payload = request_input_calls[0].args["payload"]
-    assert payload["title"] == "Security review required"
-    assert payload["components"][0]["id"] == "user_story"
+    messages = payload["messages"]
+    assert all(message["surfaceId"] == "security-review" for message in messages)
+    components = messages[-1]["components"]
+    assert any(component["id"] == "user_story" for component in components)

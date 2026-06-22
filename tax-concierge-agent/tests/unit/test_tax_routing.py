@@ -2,7 +2,7 @@ import json
 from pathlib import Path
 
 from tax_concierge_agent.agent import (
-    generate_next_ui,
+    generate_a2ui_surface,
     normalize_input,
     route_entities,
     security_checkpoint,
@@ -99,7 +99,7 @@ def test_security_checkpoint_quarantines_prompt_injection() -> None:
 def test_single_owner_never_s_corp_has_high_confidence_path() -> None:
     intake = _load_event("test_case_2_single_owner_consulting.json")
     routed = route_entities(intake).output
-    with_ui = generate_next_ui(routed).output
+    with_ui = generate_a2ui_surface(routed).output
 
     assert routed.candidate_entities == ["Sole Proprietor", "Single-Member LLC"]
     assert "S-Corp" not in routed.candidate_entities
@@ -110,9 +110,9 @@ def test_single_owner_never_s_corp_has_high_confidence_path() -> None:
 def test_ambiguous_llc_irs_filing_includes_partnership_and_s_corp() -> None:
     intake = _load_event("test_case_3_ambiguous_llc_irs_filing.json")
     routed = route_entities(intake).output
-    with_ui = generate_next_ui(routed).output
+    with_ui = generate_a2ui_surface(routed).output
 
     assert "Partnership" in routed.candidate_entities
     assert "S-Corp" in routed.candidate_entities
     assert with_ui.confidence < 0.75
-    assert with_ui.next_ui is not None
+    assert with_ui.a2ui_messages

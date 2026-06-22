@@ -47,7 +47,7 @@ class SessionState(BaseModel):
     missing_facts: list[str] = Field(default_factory=list)
     candidate_entities: list[str] = Field(default_factory=lambda: ["Cannot Determine Yet"])
     readiness_state: str = READINESS_STILL_LEARNING
-    next_ui: dict[str, Any] | None = None
+    a2ui_messages: list[dict[str, Any]] = Field(default_factory=list)
     recommendation: str | None = None
     explanation: str | None = None
     security_flags: list[str] = Field(default_factory=list)
@@ -295,7 +295,7 @@ async def intake(request: IntakeRequest) -> SessionState:
         if prior.readiness_state == READINESS_READY
         else "understanding"
     )
-    prior.next_ui = _build_next_ui(prior)
+    prior.a2ui_messages = _build_a2ui_messages(prior)
     prior.recommendation = _recommendation_for(prior)
     prior.explanation = _explanation_for(prior)
 
@@ -347,7 +347,7 @@ async def upload(
     state.candidate_entities = _candidate_entities(state.known_facts)
     state.readiness_state = _readiness_state(state)
     state.current_stage = "document_review"
-    state.next_ui = _build_next_ui(state)
+    state.a2ui_messages = _build_a2ui_messages(state)
     state.explanation = "I pulled out the clearest details and marked anything uncertain for review."
     SESSIONS[session_id] = state
     return state
@@ -369,7 +369,7 @@ async def action(session_id: str, request: ActionRequest) -> SessionState:
     state.candidate_entities = _candidate_entities(state.known_facts)
     state.readiness_state = _readiness_state(state)
     state.current_stage = "recommendation" if state.readiness_state == READINESS_READY else "follow_up"
-    state.next_ui = None if state.readiness_state == READINESS_READY else _build_next_ui(state)
+    state.a2ui_messages = _build_a2ui_messages(state)
     state.recommendation = _recommendation_for(state)
     state.explanation = _explanation_for(state)
     if result.events:
@@ -385,7 +385,7 @@ def _new_session_state(session_id: str) -> SessionState:
     return SessionState(
         session_id=session_id,
         current_stage="intake",
-        next_ui=_build_next_ui_stub(),
+        a2ui_messages=_build_a2ui_stub_messages(),
         explanation="Tell us what you know, in your own words.",
     )
 
@@ -465,70 +465,193 @@ def _readiness_state(state: SessionState) -> str:
     return READINESS_READY
 
 
-def _build_next_ui(state: SessionState) -> dict[str, Any] | None:
+def _build_a2ui_messages(state: SessionState) -> list[dict[str, Any]]:
     if state.security_flags:
-        return {
-            "schema_version": "a2ui-lite/v1",
-            "title": "Security review required",
-            "explanation": "I redacted sensitive or unsafe content. Please continue with only business tax facts.",
-            "components": [
+        explanation = "I redacted sensitive or unsafe content. Please continue with only business tax facts."
+        return _surface_messages(
+            "security-review",
+            "security_card",
+            {
+                "taxIntake": {
+                    "readinessState": READINESS_SECURITY,
+                    "explanation": explanation,
+                    "answers": {},
+                    "securityFlags": state.security_flags,
+                }
+            },
+            [
+                {
+                    "id": "security_note",
+                    "component": "Card",
+                    "props": {
+                        "tone": "warning",
+                        "title": "Security review",
+                        "text": "Sensitive taxpayer information is redacted before model reasoning.",
+                    },
+                    "children": ["user_story", "security_submit"],
+                },
                 {
                     "id": "user_story",
-                    "type": "text_input",
-                    "label": "Describe the business situation without sensitive taxpayer identifiers.",
-                    "required": True,
-                    "helper_text": "Leave out SSNs, EINs, account numbers, and instructions to the assistant.",
-                }
+                    "component": "TextField",
+                    "props": {
+                        "label": "Describe the business situation without sensitive taxpayer identifiers.",
+                        "multiline": True,
+                        "helperText": "Leave out SSNs, EINs, account numbers, and instructions to the assistant.",
+                        "whyWeAreAsking": "I need a clean version of the business facts so the workflow can continue safely.",
+                    },
+                    "binding": {"path": "/taxIntake/answers/user_story"},
+                },
+                {
+                    "id": "security_submit",
+                    "component": "Button",
+                    "props": {"label": "Continue", "style": "primary"},
+                    "action": {"event": "submitSecurityReview", "payload": {"fieldId": "user_story"}},
+                },
             ],
-            "submit_label": "Continue",
-        }
+        )
     if not state.missing_facts:
-        return None
-    labels = {
-        "business_structure": (
-            "How is your business set up?",
-            ["LLC", "Sole proprietor", "Corporation", "Not sure"],
-            "This helps narrow which tax paths may apply before we ask anything more specific.",
-        ),
-        "owner_count": (
-            "How many owners does the business have?",
-            ["One owner", "Two or more owners", "Not sure"],
-            "Owner count can change how an LLC is usually treated for federal tax filing.",
-        ),
-        "s_corp_election_status": (
-            "Has the business filed an S-Corp election?",
-            ["Yes", "No", "Not sure"],
-            "Some LLCs choose S-Corp tax treatment. If you are not sure, that is okay.",
-        ),
+        if state.readiness_state == READINESS_READY and state.recommendation:
+            return _surface_messages(
+                "recommendation",
+                "recommendation_card",
+                {
+                    "taxIntake": {
+                        "knownFacts": state.known_facts,
+                        "missingFacts": state.missing_facts,
+                        "candidateEntities": state.candidate_entities,
+                        "readinessState": READINESS_READY,
+                        "recommendation": state.recommendation,
+                    }
+                },
+                [
+                    {
+                        "id": "recommendation_card",
+                        "component": "Card",
+                        "props": {
+                            "tone": "success",
+                            "title": "We have a recommendation.",
+                            "text": state.explanation or "The key setup details are clear enough to continue.",
+                        },
+                        "children": ["recommendation_continue"],
+                    },
+                    {
+                        "id": "recommendation_continue",
+                        "component": "Button",
+                        "props": {"label": "Continue", "style": "primary"},
+                        "action": {"event": "continueRecommendation", "payload": {}},
+                    },
+                ],
+            )
+        return []
+    labels: dict[str, dict[str, Any]] = {
+        "business_structure": {
+            "label": "How is your business set up?",
+            "options": ["LLC", "Sole proprietor", "Corporation", "Not sure"],
+            "why": "This helps narrow which tax paths may apply before we ask anything more specific.",
+            "group": "Business setup",
+        },
+        "owner_count": {
+            "label": "How many owners does the business have?",
+            "options": ["One owner", "Two or more owners", "Not sure"],
+            "why": "Owner count can change how an LLC is usually treated for federal tax filing.",
+            "group": "Ownership",
+        },
+        "s_corp_election_status": {
+            "label": "Has the business filed an S-Corp election?",
+            "options": ["Yes", "No", "Not sure"],
+            "why": "Some LLCs choose S-Corp tax treatment. If you are not sure, that is okay.",
+            "group": "Tax election",
+        },
     }
     field_id = state.missing_facts[0]
-    label, options, why = labels[field_id]
-    return {
-        "schema_version": "a2ui-lite/v1",
-        "title": label,
-        "explanation": why,
-        "components": [
+    component = labels[field_id]
+    return _surface_messages(
+        "tax-intake",
+        "followup_card",
+        {
+            "taxIntake": {
+                "knownFacts": state.known_facts,
+                "missingFacts": state.missing_facts,
+                "candidateEntities": state.candidate_entities,
+                "readinessState": READINESS_NEEDS_CLARIFICATION,
+                "explanation": component["why"],
+                "answers": {},
+            }
+        },
+        [
+            {
+                "id": "followup_card",
+                "component": "Card",
+                "props": {"tone": "calm", "title": component["label"], "text": component["why"]},
+                "children": [field_id, "followup_submit"],
+            },
             {
                 "id": field_id,
-                "type": "radio",
-                "label": label,
-                "options": options,
-                "required": True,
-                "helper_text": "Choose the closest answer. You can correct it later.",
-            }
+                "component": "ChoicePicker",
+                "props": {
+                    "label": component["label"],
+                    "options": [{"label": option, "value": option} for option in component["options"]],
+                    "helperText": "Choose the closest answer. You can correct it later.",
+                    "whyWeAreAsking": component["why"],
+                    "readinessState": READINESS_NEEDS_CLARIFICATION,
+                    "displayGroup": component["group"],
+                },
+                "binding": {"path": f"/taxIntake/answers/{field_id}"},
+            },
+            {
+                "id": "followup_submit",
+                "component": "Button",
+                "props": {"label": "Continue", "style": "primary"},
+                "action": {"event": "submitFollowup", "payload": {"fieldId": field_id}},
+            },
         ],
-        "submit_label": "Continue",
-    }
+    )
 
 
-def _build_next_ui_stub() -> dict[str, Any]:
-    return {
-        "schema_version": "a2ui-lite/v1",
-        "title": "Tell us about your business",
-        "explanation": "Start with what you know. We will ask for the missing pieces one at a time.",
-        "components": [],
-        "submit_label": "Continue",
-    }
+def _build_a2ui_stub_messages() -> list[dict[str, Any]]:
+    return _surface_messages(
+        "tax-intake",
+        "intake_empty",
+        {
+            "taxIntake": {
+                "readinessState": READINESS_STILL_LEARNING,
+                "explanation": "Start with what you know. We will ask for the missing pieces one at a time.",
+                "answers": {},
+            }
+        },
+        [],
+    )
+
+
+def _surface_messages(
+    surface_id: str,
+    root: str,
+    data: dict[str, Any],
+    components: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    return [
+        {
+            "version": "0.9",
+            "message": "createSurface",
+            "surfaceId": surface_id,
+            "catalogId": "basic",
+            "root": root,
+        },
+        {
+            "version": "0.9",
+            "message": "updateDataModel",
+            "surfaceId": surface_id,
+            "catalogId": "basic",
+            "data": data,
+        },
+        {
+            "version": "0.9",
+            "message": "updateComponents",
+            "surfaceId": surface_id,
+            "catalogId": "basic",
+            "components": components,
+        },
+    ]
 
 
 def _recommendation_for(state: SessionState) -> str | None:
@@ -599,7 +722,7 @@ def _state_from_events(
         state.known_facts = intake.get("known_facts") or state.known_facts
         state.missing_facts = intake.get("missing_facts") or state.missing_facts
         state.candidate_entities = intake.get("candidate_entities") or state.candidate_entities
-        state.next_ui = intake.get("next_ui") or state.next_ui
+        state.a2ui_messages = intake.get("a2ui_messages") or state.a2ui_messages
         recommendation_summary = intake.get("recommendation_summary")
         if recommendation_summary:
             state.recommendation = _recommendation_label_from_intake(intake, state)
@@ -614,7 +737,7 @@ def _state_from_events(
     if unresolved:
         state.interrupt_id = unresolved.get("interrupt_id")
         state.requested_input_payload = unresolved.get("requested_input_payload")
-        state.next_ui = unresolved.get("next_ui") or state.next_ui
+        state.a2ui_messages = unresolved.get("a2ui_messages") or state.a2ui_messages
         state.current_stage = "follow_up"
     state.readiness_state = _readiness_state(state)
     if state.readiness_state == READINESS_READY:
@@ -700,7 +823,7 @@ def _find_unresolved_request_input(events: list[dict[str, Any]]) -> dict[str, An
                     calls[interrupt_id] = {
                         "interrupt_id": interrupt_id,
                         "requested_input_payload": payload,
-                        "next_ui": payload,
+                        "a2ui_messages": payload.get("messages") or [],
                     }
             function_response = part.get("function_response") or part.get("functionResponse")
             if function_response and function_response.get("name") == "adk_request_input":
@@ -958,7 +1081,7 @@ INDEX_HTML = r"""<!doctype html>
   <div id="toasts" class="toast-wrap" aria-live="polite"></div>
 
   <script>
-    const state = { session: null, busy: false };
+    const state = { session: null, busy: false, surfaces: {} };
     const $ = (id) => document.getElementById(id);
 
     function toast(message) {
@@ -1032,12 +1155,19 @@ INDEX_HTML = r"""<!doctype html>
       $("drawerBackdrop").classList.remove("open");
     }
 
-    async function submitA2UI(nextUi) {
+    async function submitA2UI(surface) {
       const answers = {};
-      for (const component of nextUi.components || []) {
-        const selected = document.querySelector(`[name="${component.id}"]:checked`);
-        const input = document.querySelector(`[name="${component.id}"]`);
-        answers[component.id] = selected ? selected.value : input?.value;
+      for (const input of document.querySelectorAll("#a2ui [data-binding-path]")) {
+        const fieldId = fieldFromPath(input.dataset.bindingPath);
+        if (!fieldId) continue;
+        const checked = [...document.querySelectorAll(`#a2ui [data-binding-path="${input.dataset.bindingPath}"]:checked`)];
+        if (checked.length > 1) {
+          answers[fieldId] = checked.map(item => item.value);
+        } else if (checked.length === 1) {
+          answers[fieldId] = checked[0].value;
+        } else {
+          answers[fieldId] = input.value;
+        }
       }
       if (!Object.values(answers).some(Boolean)) return toast("Choose an answer before continuing.");
       try {
@@ -1061,7 +1191,7 @@ INDEX_HTML = r"""<!doctype html>
       renderJourney(s.readiness_state);
       renderFacts(s);
       renderMissing(s);
-      renderA2UI(s.next_ui);
+      renderA2UISurface(s.a2ui_messages || []);
       renderDocs(s.document_review_items || []);
       renderSecurity(s.security_flags || [], s.redacted_categories || []);
       renderRecommendation(s);
@@ -1092,24 +1222,117 @@ INDEX_HTML = r"""<!doctype html>
       $("missingFacts").innerHTML = missing.length ? `<div class="fact-list">${missing.map(item => `<div class="missing-row"><span>${pretty(item)}</span><span class="status needs">Needs clarification</span></div>`).join("")}</div>` : `<div class="empty">No missing facts are blocking the next step.</div>`;
     }
 
-    function renderA2UI(nextUi) {
-      if (!nextUi || !(nextUi.components || []).length) {
+    function renderA2UISurface(messages) {
+      applyA2UIMessages(messages || []);
+      const surface = activeSurface();
+      if (!surface || !(surface.components || []).length) {
         $("a2ui").innerHTML = `<div class="empty">Follow-up questions will appear here one at a time.</div>`;
         return;
       }
-      const body = [`<h3>${nextUi.title}</h3><p class="helper">${nextUi.explanation || ""}</p>`];
-      for (const component of nextUi.components || []) {
-        if (component.type === "radio") {
-          body.push(`<div class="choice-group" role="radiogroup" aria-label="${component.label}">${(component.options || []).map(option => `<label class="choice"><input type="radio" name="${component.id}" value="${option}" /> ${option}</label>`).join("")}</div>`);
-        } else {
-          body.push(`<label class="sr-only" for="${component.id}">${component.label}</label><input id="${component.id}" name="${component.id}" class="story-input" style="min-height:auto" placeholder="${component.helper_text || component.label}" />`);
-        }
-      }
-      body.push(`<button class="why-button" type="button" id="whyBtn">Why we’re asking</button>`);
-      body.push(`<div class="actions"><button class="primary" id="answerBtn">${nextUi.submit_label || "Continue"}</button></div>`);
+      const componentMap = Object.fromEntries((surface.components || []).map(component => [component.id, component]));
+      const root = componentMap[surface.root] ? surface.root : surface.components[0]?.id;
+      const body = [renderComponentById(root, componentMap)];
+      const whyText = (surface.components || []).map(component => component.props?.whyWeAreAsking).find(Boolean)
+        || surface.data?.taxIntake?.explanation;
+      if (whyText) body.push(`<button class="why-button" type="button" id="whyBtn">Why we’re asking</button>`);
       $("a2ui").innerHTML = body.join("");
-      $("whyBtn").addEventListener("click", () => openDrawer(nextUi.explanation));
-      $("answerBtn").addEventListener("click", () => submitA2UI(nextUi));
+      if ($("whyBtn")) $("whyBtn").addEventListener("click", () => openDrawer(whyText));
+      if ($("answerBtn")) $("answerBtn").addEventListener("click", () => submitA2UI(surface));
+    }
+
+    function applyA2UIMessages(messages) {
+      for (const message of messages) {
+        const id = message.surfaceId || message.surface_id;
+        if (!id) continue;
+        if (message.message === "deleteSurface") {
+          delete state.surfaces[id];
+          continue;
+        }
+        const surface = state.surfaces[id] || { surfaceId: id, catalogId: message.catalogId || "basic", root: null, data: {}, components: [] };
+        if (message.message === "createSurface") {
+          surface.catalogId = message.catalogId || surface.catalogId;
+          surface.root = message.root || surface.root;
+        }
+        if (message.message === "updateDataModel") {
+          surface.data = { ...surface.data, ...(message.data || {}) };
+        }
+        if (message.message === "updateComponents") {
+          surface.components = message.components || [];
+        }
+        state.surfaces[id] = surface;
+      }
+    }
+
+    function activeSurface() {
+      const order = ["security-review", "tax-intake", "document-review", "recommendation"];
+      for (const id of order) {
+        const surface = state.surfaces[id];
+        if (surface && (surface.components || []).length) return surface;
+      }
+      return Object.values(state.surfaces).find(surface => (surface.components || []).length);
+    }
+
+    function renderComponentById(id, componentMap) {
+      const component = componentMap[id];
+      if (!component) return "";
+      return renderComponent(component, componentMap);
+    }
+
+    function renderComponent(component, componentMap) {
+      const props = component.props || {};
+      const children = (component.children || []).map(id => renderComponentById(id, componentMap)).join("");
+      if (component.component === "Card") {
+        return `<div class="review-row"><div>${props.title ? `<strong>${escapeHtml(props.title)}</strong>` : ""}${props.text ? `<div class="helper">${escapeHtml(props.text)}</div>` : ""}${children}</div></div>`;
+      }
+      if (component.component === "Column") return `<div class="stack">${children}</div>`;
+      if (component.component === "Text") {
+        const tag = props.variant === "title" ? "h3" : "p";
+        const cls = props.variant === "body" ? "helper" : "";
+        return `<${tag} class="${cls}">${escapeHtml(props.text || "")}</${tag}>`;
+      }
+      if (component.component === "ChoicePicker") {
+        const binding = component.binding?.path || "";
+        const options = props.options || [];
+        return `<div><div class="helper">${escapeHtml(props.label || "")}</div><div class="choice-group" role="radiogroup" aria-label="${escapeHtml(props.label || component.id)}">${options.map(option => `<label class="choice"><input type="radio" name="${component.id}" data-binding-path="${escapeHtml(binding)}" value="${escapeHtml(option.value ?? option.label ?? option)}" /> ${escapeHtml(option.label ?? option.value ?? option)}</label>`).join("")}</div>${componentMeta(props)}</div>`;
+      }
+      if (component.component === "TextField") {
+        const binding = component.binding?.path || "";
+        const label = props.label || component.id;
+        const placeholder = props.placeholder || props.helperText || label;
+        if (props.multiline) {
+          return `<label class="sr-only" for="${component.id}">${escapeHtml(label)}</label><textarea id="${component.id}" name="${component.id}" data-binding-path="${escapeHtml(binding)}" class="story-input" style="min-height:130px" placeholder="${escapeHtml(placeholder)}"></textarea>${componentMeta(props)}`;
+        }
+        return `<label class="sr-only" for="${component.id}">${escapeHtml(label)}</label><input id="${component.id}" name="${component.id}" data-binding-path="${escapeHtml(binding)}" class="story-input" style="min-height:auto" placeholder="${escapeHtml(placeholder)}" />${componentMeta(props)}`;
+      }
+      if (component.component === "CheckBox") {
+        const binding = component.binding?.path || "";
+        return `<label class="choice"><input type="checkbox" name="${component.id}" data-binding-path="${escapeHtml(binding)}" value="true" /> ${escapeHtml(props.label || component.id)}</label>${componentMeta(props)}`;
+      }
+      if (component.component === "Button") {
+        return `<div class="actions"><button class="${props.style === "primary" ? "primary" : ""}" id="answerBtn" type="button">${escapeHtml(props.label || "Continue")}</button></div>`;
+      }
+      return children || "";
+    }
+
+    function componentMeta(props) {
+      const bits = [];
+      if (props.readinessState) bits.push(`<span class="status ${statusClass(props.readinessState)}">${escapeHtml(props.readinessState)}</span>`);
+      if (props.displayGroup) bits.push(`<small>${escapeHtml(props.displayGroup)}</small>`);
+      if (!bits.length && !props.helperText) return "";
+      return `<div class="helper">${escapeHtml(props.helperText || "")}</div><div class="actions" style="margin-top:10px">${bits.join("")}</div>`;
+    }
+
+    function fieldFromPath(path = "") {
+      return String(path).split("/").filter(Boolean).pop();
+    }
+
+    function escapeHtml(value = "") {
+      return String(value)
+        .replaceAll("&", "&amp;")
+        .replaceAll("<", "&lt;")
+        .replaceAll(">", "&gt;")
+        .replaceAll('"', "&quot;")
+        .replaceAll("'", "&#039;");
     }
 
     function renderDocs(items) {

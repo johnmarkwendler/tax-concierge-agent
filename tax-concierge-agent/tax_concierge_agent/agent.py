@@ -15,12 +15,14 @@ from google.genai import types
 
 from .config import CONFIG
 from .models import (
+    A2UIAction,
+    A2UIBinding,
+    A2UIComponent,
+    A2UIMessage,
     FactExtraction,
     HumanInputResponse,
-    NextUI,
     TaxIntake,
     TaxWorkflowInput,
-    UIComponent,
 )
 from .routing import (
     compute_confidence,
@@ -97,15 +99,15 @@ def route_entities(node_input: TaxIntake) -> Event:
     return Event(output=intake, state={"tax_intake": intake.model_dump()})
 
 
-def generate_next_ui(node_input: TaxIntake) -> Event:
+def generate_a2ui_surface(node_input: TaxIntake) -> Event:
     missing_facts = missing_facts_for_candidates(node_input)
     confidence = compute_confidence(node_input.model_copy(update={"missing_facts": missing_facts}))
-    next_ui = _build_next_ui(missing_facts, node_input.explanation)
+    a2ui_messages = _build_a2ui_followup_messages(missing_facts, node_input.explanation)
     intake = node_input.model_copy(
         update={
             "missing_facts": missing_facts,
             "confidence": confidence,
-            "next_ui": next_ui,
+            "a2ui_messages": a2ui_messages,
         }
     )
     return Event(output=intake, state={"tax_intake": intake.model_dump()})
@@ -123,7 +125,12 @@ def decide_next_step(node_input: TaxIntake) -> Event:
 
 def final_recommendation(node_input: TaxIntake):
     summary = _recommendation_summary(node_input)
-    intake = node_input.model_copy(update={"recommendation_summary": summary, "next_ui": None})
+    intake = node_input.model_copy(
+        update={
+            "recommendation_summary": summary,
+            "a2ui_messages": _build_recommendation_a2ui_messages(node_input, summary),
+        }
+    )
     yield Event(
         message=types.Content(role="model", parts=[types.Part.from_text(text=summary)]),
         state={"tax_intake": intake.model_dump()},
@@ -132,36 +139,29 @@ def final_recommendation(node_input: TaxIntake):
 
 
 def request_missing_fact(node_input: TaxIntake):
-    next_ui = node_input.next_ui or _build_next_ui(node_input.missing_facts, node_input.explanation)
+    messages = node_input.a2ui_messages or _build_a2ui_followup_messages(
+        node_input.missing_facts, node_input.explanation
+    )
+    explanation = _surface_explanation(messages)
     yield RequestInput(
         interrupt_id="tax_intake_missing_fact",
-        message=next_ui.explanation,
-        payload=next_ui.model_dump(),
+        message=explanation,
+        payload=_a2ui_payload(messages),
         response_schema=HumanInputResponse,
     )
 
 
 def security_review(node_input: TaxIntake):
-    next_ui = NextUI(
-        title="Security review required",
-        explanation=(
-            "The intake included instructions or document content that looked like an "
-            "attempt to override the tax workflow. I quarantined that content and need "
-            "a clean description that only includes business tax facts."
-        ),
-        components=[
-            UIComponent(
-                id="user_story",
-                type="text_input",
-                label="Describe the business tax situation without instructions to the assistant.",
-                helper_text="Do not include account numbers, SSNs, addresses, or instructions such as ignore rules.",
-            )
-        ],
+    explanation = (
+        "The intake included instructions or document content that looked like an "
+        "attempt to override the tax workflow. I quarantined that content and need "
+        "a clean description that only includes business tax facts."
     )
+    messages = _build_security_review_messages(explanation)
     secured = node_input.model_copy(
         update={
             "user_story": QUARANTINED_TOKEN,
-            "next_ui": next_ui,
+            "a2ui_messages": messages,
             "security_flags": sorted({*node_input.security_flags, "security_event"}),
             "injection_detected": True,
         }
@@ -169,8 +169,8 @@ def security_review(node_input: TaxIntake):
     yield Event(output=secured, state={"tax_intake": secured.model_dump()})
     yield RequestInput(
         interrupt_id="security_clean_input",
-        message=next_ui.explanation,
-        payload=next_ui.model_dump(),
+        message=explanation,
+        payload=_a2ui_payload(messages),
         response_schema=HumanInputResponse,
     )
 
@@ -186,7 +186,7 @@ def apply_security_review_input(ctx: Context, node_input: Any) -> Event:
             "missing_facts": [],
             "candidate_entities": ["Cannot Determine Yet"],
             "confidence": 0.0,
-            "next_ui": None,
+            "a2ui_messages": [],
             "injection_detected": False,
         }
     )
@@ -204,7 +204,7 @@ def apply_human_input(ctx: Context, node_input: Any) -> Event:
         update={
             "known_facts": known_facts,
             "missing_facts": missing_facts,
-            "next_ui": None,
+            "a2ui_messages": [],
         }
     )
     return Event(output=updated, route="continue")
@@ -226,8 +226,8 @@ root_agent = Workflow(
         (security_review, apply_security_review_input),
         (apply_security_review_input, {"continue": security_checkpoint}),
         (extract_fact_summary, route_entities),
-        (route_entities, generate_next_ui),
-        (generate_next_ui, decide_next_step),
+        (route_entities, generate_a2ui_surface),
+        (generate_a2ui_surface, decide_next_step),
         (
             decide_next_step,
             {
@@ -299,25 +299,32 @@ def _parse_json_or_story(text: str) -> dict[str, Any]:
     return {"story": text}
 
 
-def _build_next_ui(missing_facts: list[str], explanation: str | None) -> NextUI:
+def _build_a2ui_followup_messages(
+    missing_facts: list[str], explanation: str | None
+) -> list[A2UIMessage]:
     first_missing = missing_facts[0] if missing_facts else "entity_type_hint"
     component_by_fact = {
-        "owner_count": UIComponent(
-            id="owner_count",
-            type="radio",
+        "owner_count": _choice_question(
+            field_id="owner_count",
             label="How many owners does the business have?",
             options=["One owner", "Two or more owners"],
-            helper_text="Ownership count is the first branch in entity classification.",
+            helper_text="Choose the closest answer. You can correct it later.",
+            why=(
+                "Owner count is the first branch in entity classification, especially "
+                "for LLCs that may be treated differently depending on ownership."
+            ),
         ),
-        "has_llc": UIComponent(
-            id="has_llc",
-            type="radio",
+        "has_llc": _choice_question(
+            field_id="has_llc",
             label="Did you form an LLC for this business?",
             options=["Yes", "No", "Not sure"],
+            helper_text="If you are not sure, choose Not sure and we will keep going.",
+            why=(
+                "LLC status changes which default tax classifications may apply."
+            ),
         ),
-        "entity_type_hint": UIComponent(
-            id="entity_type_hint",
-            type="select",
+        "entity_type_hint": _choice_question(
+            field_id="entity_type_hint",
             label="Which business setup sounds closest?",
             options=[
                 "Sole proprietor",
@@ -327,10 +334,14 @@ def _build_next_ui(missing_facts: list[str], explanation: str | None) -> NextUI:
                 "C-Corp",
                 "Not sure",
             ],
+            helper_text="Pick the plain-language option that sounds closest.",
+            why=(
+                "This gives the workflow a starting point when the story does not yet "
+                "contain enough facts for a recommendation."
+            ),
         ),
-        "state": UIComponent(
-            id="state",
-            type="select",
+        "state": _choice_question(
+            field_id="state",
             label="Which state is connected to the business?",
             options=[
                 "California",
@@ -342,33 +353,276 @@ def _build_next_ui(missing_facts: list[str], explanation: str | None) -> NextUI:
                 "Not sure",
             ],
             helper_text="State can affect whether additional state-level or community-property rules apply.",
+            why=(
+                "Some state and community-property rules can affect how spouse-owned "
+                "businesses are analyzed."
+            ),
         ),
-        "married": UIComponent(
-            id="married",
-            type="radio",
+        "married": _choice_question(
+            field_id="married",
             label="Are the business owners married to each other?",
             options=["Yes", "No", "Not sure"],
             helper_text="Marital status can affect how a spouse-owned LLC is analyzed in some states.",
+            why=(
+                "Spouse-owned LLCs can be treated differently in some states, so this "
+                "helps avoid a premature recommendation."
+            ),
         ),
-        "document_upload": UIComponent(
-            id="document_upload",
-            type="document_upload",
-            label="Upload the relevant tax document.",
+        "document_upload": _choice_question(
+            field_id="document_upload",
+            label="Do you have a formation document or tax notice to upload?",
+            options=["Yes", "No", "Not sure"],
             helper_text="Documents are treated as observations and reviewed before facts are accepted.",
+            why=(
+                "A formation document, 1099, or election notice can provide clues, but "
+                "low-confidence extracted fields still need review."
+            ),
         ),
     }
-    return NextUI(
-        title="One more business detail",
-        explanation=explanation
-        or "I need one more fact before recommending the most likely tax path.",
-        components=[component_by_fact.get(first_missing, component_by_fact["entity_type_hint"])],
+    question_components = component_by_fact.get(
+        first_missing, component_by_fact["entity_type_hint"]
     )
+    return _surface_messages(
+        surface_id="tax-intake",
+        root="followup_card",
+        data={
+            "taxIntake": {
+                "missingFacts": missing_facts,
+                "readinessState": "Needs clarification",
+                "explanation": explanation
+                or "I need one more fact before recommending the most likely tax path.",
+                "answers": {},
+            }
+        },
+        components=[
+            A2UIComponent(
+                id="followup_card",
+                component="Card",
+                props={"tone": "calm", "title": "One more business detail"},
+                children=["followup_stack"],
+            ),
+            A2UIComponent(
+                id="followup_stack",
+                component="Column",
+                props={"gap": "comfortable"},
+                children=[
+                    "followup_title",
+                    "followup_explanation",
+                    *[component.id for component in question_components],
+                    "followup_submit",
+                ],
+            ),
+            A2UIComponent(
+                id="followup_title",
+                component="Text",
+                props={"text": "One more business detail", "variant": "title"},
+            ),
+            A2UIComponent(
+                id="followup_explanation",
+                component="Text",
+                props={
+                    "text": explanation
+                    or "I need one more fact before recommending the most likely tax path.",
+                    "variant": "body",
+                },
+            ),
+            *question_components,
+            A2UIComponent(
+                id="followup_submit",
+                component="Button",
+                props={"label": "Continue", "style": "primary"},
+                action=A2UIAction(event="submitFollowup", payload={"fieldId": first_missing}),
+            ),
+        ],
+    )
+
+
+def _choice_question(
+    field_id: str,
+    label: str,
+    options: list[str],
+    helper_text: str,
+    why: str,
+) -> list[A2UIComponent]:
+    return [
+        A2UIComponent(
+            id=f"{field_id}_question",
+            component="Text",
+            props={"text": label, "variant": "question"},
+        ),
+        A2UIComponent(
+            id=field_id,
+            component="ChoicePicker",
+            props={
+                "label": label,
+                "options": [{"label": option, "value": option} for option in options],
+                "helperText": helper_text,
+                "whyWeAreAsking": why,
+                "readinessState": "Needs clarification",
+            },
+            binding=A2UIBinding(path=f"/taxIntake/answers/{field_id}"),
+        ),
+    ]
+
+
+def _build_security_review_messages(explanation: str) -> list[A2UIMessage]:
+    return _surface_messages(
+        surface_id="security-review",
+        root="security_card",
+        data={
+            "taxIntake": {
+                "readinessState": "Security review required",
+                "explanation": explanation,
+                "answers": {},
+                "securityFlags": ["security_event"],
+            }
+        },
+        components=[
+            A2UIComponent(
+                id="security_card",
+                component="Card",
+                props={"tone": "warning", "title": "Security review required"},
+                children=["security_stack"],
+            ),
+            A2UIComponent(
+                id="security_stack",
+                component="Column",
+                props={"gap": "comfortable"},
+                children=[
+                    "security_title",
+                    "security_explanation",
+                    "user_story",
+                    "security_submit",
+                ],
+            ),
+            A2UIComponent(
+                id="security_title",
+                component="Text",
+                props={"text": "Security review required", "variant": "title"},
+            ),
+            A2UIComponent(
+                id="security_explanation",
+                component="Text",
+                props={"text": explanation, "variant": "body"},
+            ),
+            A2UIComponent(
+                id="user_story",
+                component="TextField",
+                props={
+                    "label": "Describe the business tax situation without instructions to the assistant.",
+                    "multiline": True,
+                    "helperText": "Do not include account numbers, SSNs, addresses, or instructions such as ignore rules.",
+                    "whyWeAreAsking": (
+                        "I need a clean version of the business facts so the workflow can "
+                        "continue without unsafe instructions or sensitive identifiers."
+                    ),
+                },
+                binding=A2UIBinding(path="/taxIntake/answers/user_story"),
+            ),
+            A2UIComponent(
+                id="security_submit",
+                component="Button",
+                props={"label": "Continue", "style": "primary"},
+                action=A2UIAction(event="submitSecurityReview", payload={"fieldId": "user_story"}),
+            ),
+        ],
+    )
+
+
+def _build_recommendation_a2ui_messages(
+    intake: TaxIntake, summary: str
+) -> list[A2UIMessage]:
+    return _surface_messages(
+        surface_id="recommendation",
+        root="recommendation_card",
+        data={
+            "taxIntake": {
+                "knownFacts": intake.known_facts,
+                "missingFacts": intake.missing_facts,
+                "candidateEntities": intake.candidate_entities,
+                "readinessState": "Ready for recommendation",
+                "recommendation": summary,
+            }
+        },
+        components=[
+            A2UIComponent(
+                id="recommendation_card",
+                component="Card",
+                props={"tone": "success", "title": "We have a recommendation."},
+                children=["recommendation_stack"],
+            ),
+            A2UIComponent(
+                id="recommendation_stack",
+                component="Column",
+                props={"gap": "comfortable"},
+                children=["recommendation_title", "recommendation_body", "recommendation_continue"],
+            ),
+            A2UIComponent(
+                id="recommendation_title",
+                component="Text",
+                props={"text": "We have a recommendation.", "variant": "title"},
+            ),
+            A2UIComponent(
+                id="recommendation_body",
+                component="Text",
+                props={"text": summary, "variant": "body"},
+            ),
+            A2UIComponent(
+                id="recommendation_continue",
+                component="Button",
+                props={"label": "Continue", "style": "primary"},
+                action=A2UIAction(event="continueRecommendation", payload={}),
+            ),
+        ],
+    )
+
+
+def _surface_messages(
+    surface_id: str,
+    root: str,
+    data: dict[str, Any],
+    components: list[A2UIComponent],
+) -> list[A2UIMessage]:
+    return [
+        A2UIMessage(message="createSurface", surfaceId=surface_id, catalogId="basic", root=root),
+        A2UIMessage(message="updateDataModel", surfaceId=surface_id, catalogId="basic", data=data),
+        A2UIMessage(
+            message="updateComponents",
+            surfaceId=surface_id,
+            catalogId="basic",
+            components=components,
+        ),
+    ]
+
+
+def _a2ui_payload(messages: list[A2UIMessage]) -> dict[str, Any]:
+    return {
+        "messages": [
+            message.model_dump(mode="json", by_alias=True, exclude_none=True)
+            for message in messages
+        ]
+    }
+
+
+def _surface_explanation(messages: list[A2UIMessage]) -> str:
+    for message in messages:
+        if message.data:
+            explanation = message.data.get("taxIntake", {}).get("explanation")
+            if explanation:
+                return str(explanation)
+    return "I need one more detail before recommending the next step."
 
 
 def _coerce_human_response(node_input: Any) -> HumanInputResponse:
     if isinstance(node_input, HumanInputResponse):
         return node_input
     if isinstance(node_input, dict):
+        answers = node_input.get("answers")
+        if isinstance(answers, dict):
+            if len(answers) == 1:
+                field_id, value = next(iter(answers.items()))
+                return HumanInputResponse(field_id=field_id, value=value)
+            return HumanInputResponse(field_id="answers", value=answers)
         return HumanInputResponse.model_validate(node_input)
     if isinstance(node_input, str):
         return HumanInputResponse(field_id="entity_type_hint", value=node_input)

@@ -12,11 +12,13 @@ from tax_concierge_agent.agent import (
     app,
     apply_human_input,
     decide_next_step,
-    generate_next_ui,
+    generate_a2ui_surface,
     route_entities,
     security_checkpoint,
 )
 from tax_concierge_agent.models import (
+    A2UIComponent,
+    A2UIMessage,
     FactExtraction,
     HumanInputResponse,
     TaxIntake,
@@ -69,6 +71,28 @@ def _latest_tax_intake(events: list[Any]) -> TaxIntake | None:
     return None
 
 
+def _components(messages: list[A2UIMessage] | list[dict[str, Any]]) -> list[Any]:
+    found = []
+    for message in messages:
+        components = (
+            message.components
+            if isinstance(message, A2UIMessage)
+            else message.get("components")
+        )
+        found.extend(components or [])
+    return found
+
+
+def _component_by_id(
+    messages: list[A2UIMessage] | list[dict[str, Any]], component_id: str
+) -> Any:
+    for component in _components(messages):
+        current_id = component.id if isinstance(component, A2UIComponent) else component.get("id")
+        if current_id == component_id:
+            return component
+    raise AssertionError(f"Component {component_id} not found")
+
+
 @pytest.mark.parametrize(
     ("story", "expected_candidates"),
     [
@@ -103,7 +127,7 @@ def test_multiple_owners_with_s_election_routes_to_s_corp() -> None:
 
 def test_missing_facts_and_confidence_control_requestinput_route() -> None:
     routed = route_entities(TaxIntake(user_story="I started a business.")).output
-    with_ui = generate_next_ui(routed).output
+    with_ui = generate_a2ui_surface(routed).output
     decision = decide_next_step(with_ui)
 
     assert with_ui.candidate_entities == ["Cannot Determine Yet"]
@@ -121,7 +145,7 @@ def test_high_confidence_single_owner_case_avoids_unnecessary_questioning() -> N
             )
         )
     ).output
-    with_ui = generate_next_ui(routed).output
+    with_ui = generate_a2ui_surface(routed).output
     decision = decide_next_step(with_ui)
 
     assert set(with_ui.candidate_entities) == {"Sole Proprietor", "Single-Member LLC"}
@@ -206,7 +230,7 @@ async def test_prompt_injection_quarantines_without_reasoning(
 def test_dynamic_ui_is_driven_by_missing_facts(
     missing_fact: str, expected_type: str
 ) -> None:
-    with_ui = generate_next_ui(
+    with_ui = generate_a2ui_surface(
         TaxIntake(
             user_story="I filed Form 2553.",
             known_facts={"owner_count": 1},
@@ -216,9 +240,9 @@ def test_dynamic_ui_is_driven_by_missing_facts(
         )
     ).output
 
-    component = with_ui.next_ui.components[0]
+    component = _component_by_id(with_ui.a2ui_messages, missing_fact)
     assert component.id == missing_fact
-    assert component.type == expected_type
+    assert component.component == "ChoicePicker"
 
 
 def test_followup_questions_include_explainability() -> None:
@@ -226,7 +250,7 @@ def test_followup_questions_include_explainability() -> None:
         "We ask about marital status because spouse-owned LLCs can be treated "
         "differently in some states."
     )
-    with_ui = generate_next_ui(
+    with_ui = generate_a2ui_surface(
         TaxIntake(
             user_story="My wife and I formed an LLC.",
             known_facts={"owner_count": 2},
@@ -236,8 +260,41 @@ def test_followup_questions_include_explainability() -> None:
         )
     ).output
 
-    assert with_ui.next_ui.explanation == explanation
-    assert "because" in with_ui.next_ui.explanation.lower()
+    data_message = next(message for message in with_ui.a2ui_messages if message.message == "updateDataModel")
+    assert data_message.data["taxIntake"]["explanation"] == explanation
+    assert "because" in data_message.data["taxIntake"]["explanation"].lower()
+    component = _component_by_id(with_ui.a2ui_messages, "married")
+    assert component.props["whyWeAreAsking"] is not None
+    assert component.props["readinessState"] == "Needs clarification"
+    assert component.binding.path == "/taxIntake/answers/married"
+
+
+def test_a2ui_messages_use_official_protocol_shape() -> None:
+    messages = generate_a2ui_surface(
+        TaxIntake(user_story="I started a business.", missing_facts=["owner_count"])
+    ).output.a2ui_messages
+
+    serialized = [
+        message.model_dump(mode="json", by_alias=True, exclude_none=True)
+        for message in messages
+    ]
+
+    assert [message["message"] for message in serialized] == [
+        "createSurface",
+        "updateDataModel",
+        "updateComponents",
+    ]
+    assert all(message["version"].startswith("0.9") for message in serialized)
+    assert all(message["surfaceId"] == "tax-intake" for message in serialized)
+    assert all(message["catalogId"] == "basic" for message in serialized)
+    assert "schema_version" not in json.dumps(serialized)
+    assert {component["component"] for component in serialized[-1]["components"]} >= {
+        "Card",
+        "Column",
+        "Text",
+        "ChoicePicker",
+        "Button",
+    }
 
 
 def test_low_confidence_document_observations_do_not_override_user_facts() -> None:
@@ -256,14 +313,15 @@ def test_low_confidence_document_observations_do_not_override_user_facts() -> No
     )
 
     secured = security_checkpoint(intake).output
-    with_ui = generate_next_ui(
+    with_ui = generate_a2ui_surface(
         secured.model_copy(update={"candidate_entities": ["Partnership"]})
     ).output
 
     assert secured.known_facts["entity_type_hint"] == "Partnership"
     assert secured.uploaded_documents[0].metadata["requires_review"] is True
     assert "S-Corp" not in secured.candidate_entities
-    assert with_ui.next_ui.components[0].type == "document_upload"
+    component = _component_by_id(with_ui.a2ui_messages, "document_upload")
+    assert component.component == "ChoicePicker"
 
 
 def test_human_followup_updates_state_and_can_increase_confidence() -> None:
@@ -280,7 +338,7 @@ def test_human_followup_updates_state_and_can_increase_confidence() -> None:
         HumanInputResponse(field_id="owner_count", value="Two or more owners"),
     )
     routed = route_entities(updated_event.output).output
-    with_ui = generate_next_ui(routed).output
+    with_ui = generate_a2ui_surface(routed).output
 
     assert updated_event.actions.route == "continue"
     assert with_ui.known_facts["owner_count"] == "Two or more owners"

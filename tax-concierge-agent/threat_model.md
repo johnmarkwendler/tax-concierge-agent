@@ -15,7 +15,7 @@ flowchart TD
   SEC -->|clean| LLM[Fact extraction LLM]
   SEC -->|security_review| HITL1[RequestInput security review]
   LLM --> ROUTE[Deterministic entity routing]
-  ROUTE --> UI[A2UI / NextUI generation]
+  ROUTE --> UI[Official A2UI message generation]
   UI --> DECIDE{Confidence threshold}
   DECIDE -->|recommend| RECOMMEND[Final recommendation]
   DECIDE -->|needs_input| HITL2[RequestInput missing facts]
@@ -239,7 +239,7 @@ Severity: Medium
 
 Mitigations:
 
-* schema-validate `NextUI` and `HumanInputResponse`
+* schema-validate A2UI messages and `HumanInputResponse`
 * resume the same session only through recorded interrupt IDs
 * keep UI generation deterministic from missing facts
 
