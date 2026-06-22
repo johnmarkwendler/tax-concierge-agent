@@ -1,7 +1,24 @@
 import pytest
 
+from tax_concierge_agent import agent as agent_module
 from tax_concierge_agent.events import TaxEvent, short_subscription_name
+from tax_concierge_agent.models import FactExtraction, TaxIntake
 from tax_concierge_agent.service import AmbientRuntime
+
+
+@pytest.fixture(autouse=True)
+def stub_fact_extraction(monkeypatch: pytest.MonkeyPatch) -> None:
+    async def fake_extract(intake: TaxIntake) -> FactExtraction:
+        return FactExtraction(
+            summary="Stubbed ambient intake summary",
+            known_facts={"entity_type": "LLC"},
+            missing_facts=["state", "married"],
+            next_question_explanation=(
+                "State and marital status affect whether additional business tax rules apply."
+            ),
+        )
+
+    monkeypatch.setattr(agent_module, "_extract_facts_with_llm", fake_extract)
 
 
 @pytest.mark.asyncio

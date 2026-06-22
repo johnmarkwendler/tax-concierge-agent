@@ -22,7 +22,7 @@ def _load_local_env(path: Path = Path(".env")) -> None:
 
 _load_local_env()
 
-JUDGE_MODEL = os.getenv("TAX_EVAL_JUDGE_MODEL", "gemini-3.1-flash-lite")
+JUDGE_MODEL = os.getenv("TAX_EVAL_JUDGE_MODEL", "gemini-2.5-flash-lite")
 
 
 def evaluate_metric(instance: dict[str, Any], metric_name: str, rubric: str) -> dict[str, Any]:

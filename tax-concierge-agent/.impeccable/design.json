@@ -1,0 +1,178 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-06-22T00:00:00-07:00",
+  "title": "Design System: Tax Concierge Agent",
+  "extensions": {
+    "northStar": "The Guided Worktable",
+    "colorMeta": {
+      "bg": {
+        "role": "neutral",
+        "displayName": "True White",
+        "canonical": "oklch(1.000 0.000 0)",
+        "usage": "Main page background."
+      },
+      "surface": {
+        "role": "neutral",
+        "displayName": "Worktable Surface",
+        "canonical": "oklch(0.985 0.006 353)",
+        "usage": "Primary card background."
+      },
+      "surface-raised": {
+        "role": "neutral",
+        "displayName": "Raised Surface",
+        "canonical": "oklch(0.970 0.010 353)",
+        "usage": "Subpanels, recent upload rows, disclosure bodies, editable findings."
+      },
+      "ink": {
+        "role": "neutral",
+        "displayName": "Deep Ink",
+        "canonical": "oklch(0.205 0.028 260)",
+        "usage": "Primary text and icons."
+      },
+      "muted": {
+        "role": "neutral",
+        "displayName": "Soft Ink",
+        "canonical": "oklch(0.455 0.030 260)",
+        "usage": "Secondary text and metadata."
+      },
+      "primary": {
+        "role": "primary",
+        "displayName": "Guided Rose",
+        "canonical": "oklch(0.540 0.135 353)",
+        "tonalRamp": [
+          "oklch(0.940 0.035 353)",
+          "oklch(0.760 0.090 353)",
+          "oklch(0.540 0.135 353)",
+          "oklch(0.410 0.115 353)"
+        ],
+        "usage": "Primary actions, selected controls, active journey states."
+      },
+      "accent": {
+        "role": "secondary",
+        "displayName": "Steady Teal",
+        "canonical": "oklch(0.470 0.095 195)",
+        "tonalRamp": [
+          "oklch(0.930 0.035 195)",
+          "oklch(0.720 0.070 195)",
+          "oklch(0.470 0.095 195)",
+          "oklch(0.340 0.080 195)"
+        ],
+        "usage": "Confident findings, reviewed document details, calm validation states."
+      }
+    },
+    "typographyMeta": {
+      "display": {
+        "displayName": "Display",
+        "purpose": "Hero prompt only."
+      },
+      "headline": {
+        "displayName": "Headline",
+        "purpose": "Major card headings."
+      },
+      "title": {
+        "displayName": "Title",
+        "purpose": "Question titles, document finding titles, recommendation subsections."
+      },
+      "body": {
+        "displayName": "Body",
+        "purpose": "Explanations, generated summaries, and helper copy."
+      },
+      "label": {
+        "displayName": "Label",
+        "purpose": "Controls, chips, journey steps, and metadata."
+      }
+    },
+    "elevation": {
+      "focus-ring": "0 0 0 3px oklch(0.940 0.035 353)",
+      "lifted-state": "0 6px 8px oklch(0.205 0.028 260 / 0.08)",
+      "overlay-sheet": "0 12px 24px oklch(0.205 0.028 260 / 0.12)"
+    },
+    "motion": {
+      "durationFast": "150ms",
+      "durationBase": "220ms",
+      "durationSlow": "280ms",
+      "easeOut": "cubic-bezier(0.16, 1, 0.3, 1)",
+      "patterns": [
+        "Card entry uses opacity and 8px translate, never layout animation.",
+        "Disclosure expansion uses height interpolation only when measured; otherwise use crossfade.",
+        "Reduced motion uses instant state changes or 120ms crossfades."
+      ]
+    },
+    "breakpoints": {
+      "mobile": "0-639px",
+      "tablet": "640-1023px",
+      "desktop": "1024px+"
+    },
+    "a2uiPatterns": {
+      "heroCard": {
+        "headline": "Tell us about your business.",
+        "subtext": "Come as you are. We'll figure it out together.",
+        "controls": [
+          "large story text area",
+          "document upload button",
+          "recent uploads"
+        ]
+      },
+      "understandingCard": {
+        "headline": "We think we understand the following",
+        "statuses": [
+          "Confident",
+          "Needs clarification",
+          "Still learning"
+        ],
+        "forbidden": [
+          "percentages",
+          "model scores",
+          "tax jargon without explanation"
+        ]
+      },
+      "followupQuestion": {
+        "rule": "One concept per card.",
+        "controls": [
+          "radio",
+          "segmented control",
+          "select",
+          "text input only when necessary"
+        ],
+        "requiredDisclosure": "Why we're asking"
+      },
+      "recommendationJourney": {
+        "steps": [
+          "Still learning",
+          "Getting clearer",
+          "Ready for recommendation"
+        ]
+      },
+      "documentReview": {
+        "headline": "We found these details",
+        "groups": [
+          "Confident findings",
+          "Needs review"
+        ],
+        "rule": "Never dump raw OCR text."
+      },
+      "recommendationScreen": {
+        "headline": "We have a recommendation.",
+        "sections": [
+          "Business type",
+          "Why",
+          "Assumptions",
+          "Questions that influenced the recommendation"
+        ],
+        "primaryAction": "Continue"
+      }
+    },
+    "dos": [
+      "Render A2UI output as coherent product components, not chat messages.",
+      "Use plain language first and explain formal tax terms only when needed.",
+      "Give every follow-up question a Why we're asking disclosure.",
+      "Make correction paths visible near generated facts and recommendations."
+    ],
+    "donts": [
+      "Do not show chat bubbles, avatars, giant forms, or transcript-style turns.",
+      "Do not show confidence percentages.",
+      "Do not dump raw OCR text.",
+      "Do not use jargon-heavy tax software language."
+    ]
+  }
+}

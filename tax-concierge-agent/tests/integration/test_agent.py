@@ -16,7 +16,24 @@ import pytest
 from google.adk.runners import InMemoryRunner
 from google.genai import types
 
+from tax_concierge_agent import agent as agent_module
 from tax_concierge_agent.agent import app
+from tax_concierge_agent.models import FactExtraction, TaxIntake
+
+
+@pytest.fixture(autouse=True)
+def stub_fact_extraction(monkeypatch: pytest.MonkeyPatch) -> None:
+    async def fake_extract(intake: TaxIntake) -> FactExtraction:
+        return FactExtraction(
+            summary="Stubbed workflow summary",
+            known_facts={},
+            missing_facts=["owner_count", "entity_type_hint"],
+            next_question_explanation=(
+                "Ownership and entity setup determine the likely business tax path."
+            ),
+        )
+
+    monkeypatch.setattr(agent_module, "_extract_facts_with_llm", fake_extract)
 
 
 @pytest.mark.asyncio
