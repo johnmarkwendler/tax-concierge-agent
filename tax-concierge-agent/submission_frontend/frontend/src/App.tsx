@@ -55,8 +55,8 @@ export function App() {
       <section className="story-composer">
         <div>
           <p className="product-name">Guided worktable</p>
-          <h1>Tell us about your business.</h1>
-          <p>Start with ordinary language. The interface will turn missing details into one clear question at a time.</p>
+          <h1>Not sure where to start? Just tell us what's going on</h1>
+          <p>Describe your situation in your own words. We'll figure out the rest, one question at a time.</p>
         </div>
         <textarea
           value={story}
@@ -80,9 +80,9 @@ export function App() {
               )
             }
           >
-            {busy ? "Working..." : "Continue"}
+            {busy ? "Working..." : "Get started"}
           </button>
-          <span>We never need SSNs, EINs, account numbers, or passwords.</span>
+          <span>Skip sensitive info — no SSNs, EINs, or account numbers needed.</span>
         </div>
       </section>
 
@@ -103,7 +103,7 @@ export function App() {
       <A2UISurfaceView
         surface={surface}
         knownFacts={session?.known_facts ?? {}}
-        readiness={session?.readiness_state ?? "Still learning"}
+        readiness={session?.readiness_state ?? "Getting to know you"}
         missingFacts={session?.missing_facts ?? []}
         candidateEntities={session?.candidate_entities ?? []}
         documentItems={session?.document_review_items ?? []}

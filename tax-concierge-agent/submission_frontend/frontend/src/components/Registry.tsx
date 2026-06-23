@@ -111,7 +111,7 @@ export function StoryInputCard() {
     <motion.section layout className="hero-intake" aria-label="Tax Concierge intake">
       <div>
         <p className="product-name">Tax Concierge</p>
-        <h1>Tell us about your business.</h1>
+        <h1>Not sure where to start? Just tell us what's going on</h1>
         <p className="hero-copy">Come as you are. We will figure out the entity path together.</p>
       </div>
     </motion.section>
@@ -231,7 +231,7 @@ function ReadinessStatus({
         <span>
           {missingFacts.length
             ? `${missingFacts.length} detail${missingFacts.length === 1 ? "" : "s"} still needed`
-            : "No blocking details right now"}
+            : "Nothing's blocking us yet"}
         </span>
       </motion.div>
     </motion.section>
@@ -262,7 +262,7 @@ function ConfirmedFactsRail({ facts }: { facts: Record<string, unknown> }) {
             ))
           ) : (
             <motion.p layout className="empty-copy">
-              Facts you confirm will collect here.
+              Anything you confirm shows up here
             </motion.p>
           )}
         </AnimatePresence>
@@ -299,7 +299,7 @@ function DocumentUploadCard({
 
 function DocumentFieldReviewCard({ documentItems }: { documentItems: DocumentReviewItem[] }) {
   if (!documentItems.length) {
-    return <p className="empty-copy">Uploaded details will appear as editable review rows.</p>;
+    return <p className="empty-copy">Anything you upload becomes editable below</p>;
   }
   return (
     <motion.div layout className="doc-list">
