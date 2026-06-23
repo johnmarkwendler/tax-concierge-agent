@@ -24,6 +24,8 @@ const trustItems = [
   { label: "Works with W-2s, LLCs, K-1s, investments, and more", icon: FileText }
 ];
 
+const thinkingCues = ["Reading your story", "Finding tax details", "Preparing the first question"];
+
 export function App() {
   const [session, setSession] = useState<SessionState | null>(null);
   const [story, setStory] = useState(initialStory);
@@ -202,6 +204,7 @@ function InitialHeroState({
               key={chip.label}
               type="button"
               className="prompt-chip"
+              disabled={busy}
               onClick={() => onStoryChange(chip.value)}
               initial={{ opacity: 0, y: 8 }}
               animate={{ opacity: 1, y: 0 }}
@@ -222,27 +225,117 @@ function InitialHeroState({
             onChange={(event) => onStoryChange(event.target.value)}
             className="story-field spotlight-field"
             placeholder="Type or ask what's going on..."
+            disabled={busy}
           />
           <button
             type="button"
-            className="send-button"
-            aria-label="Start intake"
+            className={`send-button${busy ? " is-loading" : ""}`}
+            aria-label={busy ? "Working on your intake" : "Start intake"}
             disabled={!canSubmit}
             onClick={onSubmit}
           >
-            <Send size={24} />
+            <AnimatePresence mode="wait" initial={false}>
+              {busy ? (
+                <motion.span
+                  key="send-loading"
+                  className="send-thinking"
+                  initial={{ opacity: 0, y: 5 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  exit={{ opacity: 0, y: -5 }}
+                  transition={{ duration: 0.18, ease: [0.16, 1, 0.3, 1] }}
+                >
+                  <Sparkles size={20} className="thinking-spark" />
+                  <span className="thinking-dot" />
+                </motion.span>
+              ) : (
+                <motion.span
+                  key="send-idle"
+                  initial={{ opacity: 0, y: 5 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  exit={{ opacity: 0, y: -5 }}
+                  transition={{ duration: 0.16, ease: [0.16, 1, 0.3, 1] }}
+                >
+                  <Send size={24} />
+                </motion.span>
+              )}
+            </AnimatePresence>
           </button>
         </div>
 
+        <AnimatePresence initial={false}>
+          {busy ? (
+            <motion.div
+              className="thinking-cues"
+              role="status"
+              aria-live="polite"
+              initial={{ opacity: 0, y: 8 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -6 }}
+              transition={{ duration: 0.2, ease: [0.16, 1, 0.3, 1] }}
+            >
+              {thinkingCues.map((cue, index) => (
+                <motion.span
+                  key={cue}
+                  className="thinking-cue"
+                  initial={{ opacity: 0, y: 8 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  transition={{ duration: 0.2, delay: index * 0.06, ease: [0.16, 1, 0.3, 1] }}
+                >
+                  <Sparkles size={14} />
+                  {cue}
+                </motion.span>
+              ))}
+            </motion.div>
+          ) : null}
+        </AnimatePresence>
+
         <button
           type="button"
-          className="primary-button spotlight-cta"
+          className={`primary-button spotlight-cta${busy ? " is-loading" : ""}`}
           disabled={!canSubmit}
           onClick={onSubmit}
         >
-          {busy ? "Working..." : "Start for free"}
+          <AnimatedSubmitLabel busy={busy} />
         </button>
       </motion.section>
     </motion.main>
+  );
+}
+
+function AnimatedSubmitLabel({ busy }: { busy: boolean }) {
+  return (
+    <span className="submit-label" aria-live="polite">
+      <AnimatePresence mode="wait" initial={false}>
+        {busy ? (
+          <motion.span
+            key="loading"
+            className="submit-label-content"
+            initial={{ opacity: 0, y: 6 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -6 }}
+            transition={{ duration: 0.18, ease: [0.16, 1, 0.3, 1] }}
+          >
+            <Sparkles size={18} className="thinking-spark" />
+            Working
+            <span className="loading-dots" aria-hidden="true">
+              <span />
+              <span />
+              <span />
+            </span>
+          </motion.span>
+        ) : (
+          <motion.span
+            key="idle"
+            className="submit-label-content"
+            initial={{ opacity: 0, y: 6 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -6 }}
+            transition={{ duration: 0.16, ease: [0.16, 1, 0.3, 1] }}
+          >
+            Start for free
+          </motion.span>
+        )}
+      </AnimatePresence>
+    </span>
   );
 }

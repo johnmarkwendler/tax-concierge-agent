@@ -180,6 +180,7 @@ p {
 .primary-button,
 .secondary-button,
 .upload-control {
+  position: relative;
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -311,6 +312,10 @@ p {
   color: var(--primary);
 }
 
+.prompt-chip:disabled {
+  opacity: 0.72;
+}
+
 .sr-only {
   position: absolute;
   width: 1px;
@@ -352,19 +357,177 @@ p {
   color: oklch(0.570 0.028 260);
 }
 
+.story-field:disabled {
+  color: oklch(0.310 0.035 260);
+  -webkit-text-fill-color: oklch(0.310 0.035 260);
+  background: var(--bg);
+  cursor: wait;
+}
+
 .send-button {
+  position: relative;
   flex: 0 0 auto;
   width: 52px;
   height: 52px;
   border-radius: 14px;
   color: var(--bg);
   background: var(--primary);
+  overflow: hidden;
+}
+
+.send-button > span,
+.send-thinking,
+.submit-label,
+.submit-label-content,
+.loading-dots {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.send-button.is-loading,
+.spotlight-cta.is-loading {
+  opacity: 1;
+  cursor: wait;
+}
+
+.send-button.is-loading {
+  background: linear-gradient(135deg, var(--primary), var(--accent));
+}
+
+.send-button.is-loading::before,
+.spotlight-cta.is-loading::before {
+  position: absolute;
+  inset: 0;
+  content: "";
+  background: linear-gradient(
+    110deg,
+    transparent 0%,
+    oklch(1 0 0 / 0.18) 38%,
+    oklch(1 0 0 / 0.32) 50%,
+    oklch(1 0 0 / 0.18) 62%,
+    transparent 100%
+  );
+  transform: translateX(-120%);
+  animation: submit-shimmer 1.25s cubic-bezier(0.16, 1, 0.3, 1) infinite;
+}
+
+.send-thinking {
+  position: relative;
+  gap: 4px;
+  z-index: 1;
+}
+
+.thinking-spark {
+  animation: thinking-sparkle 1.1s cubic-bezier(0.16, 1, 0.3, 1) infinite;
+}
+
+.thinking-dot {
+  width: 5px;
+  height: 5px;
+  border-radius: 999px;
+  background: currentColor;
+  animation: loading-dot 0.9s ease-out infinite;
 }
 
 .spotlight-cta {
   display: none;
   width: 100%;
   min-height: 54px;
+  overflow: hidden;
+}
+
+.submit-label {
+  min-width: 128px;
+}
+
+.submit-label-content {
+  position: relative;
+  z-index: 1;
+  gap: 8px;
+}
+
+.loading-dots {
+  gap: 3px;
+  width: 22px;
+}
+
+.loading-dots span {
+  width: 5px;
+  height: 5px;
+  border-radius: 999px;
+  background: currentColor;
+  animation: loading-dot 0.9s ease-out infinite;
+}
+
+.loading-dots span:nth-child(2) {
+  animation-delay: 0.12s;
+}
+
+.loading-dots span:nth-child(3) {
+  animation-delay: 0.24s;
+}
+
+.thinking-cues {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  min-height: 34px;
+}
+
+.thinking-cue {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 34px;
+  border: 1px solid oklch(0.850 0.045 258);
+  border-radius: 999px;
+  background: var(--primary-soft);
+  color: var(--primary-strong);
+  padding: 7px 10px;
+  font-size: 0.875rem;
+  font-weight: 750;
+}
+
+.thinking-cue svg {
+  color: var(--accent);
+  animation: thinking-sparkle 1.2s cubic-bezier(0.16, 1, 0.3, 1) infinite;
+}
+
+@keyframes submit-shimmer {
+  0% {
+    transform: translateX(-120%);
+  }
+
+  100% {
+    transform: translateX(120%);
+  }
+}
+
+@keyframes loading-dot {
+  0%,
+  100% {
+    opacity: 0.4;
+    transform: translateY(0) scale(0.86);
+  }
+
+  45% {
+    opacity: 1;
+    transform: translateY(-2px) scale(1);
+  }
+}
+
+@keyframes thinking-sparkle {
+  0%,
+  100% {
+    opacity: 0.72;
+    transform: rotate(0deg) scale(0.96);
+  }
+
+  50% {
+    opacity: 1;
+    transform: rotate(10deg) scale(1.06);
+  }
 }
 
 .error-banner {
@@ -714,5 +877,19 @@ p {
     animation-iteration-count: 1 !important;
     scroll-behavior: auto !important;
     transition-duration: 0.001ms !important;
+  }
+
+  .send-button.is-loading::before,
+  .spotlight-cta.is-loading::before {
+    display: none;
+  }
+
+  .thinking-spark,
+  .thinking-cue svg,
+  .loading-dots span,
+  .thinking-dot {
+    animation: none !important;
+    opacity: 1;
+    transform: none;
   }
 }
