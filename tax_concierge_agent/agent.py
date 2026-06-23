@@ -15,6 +15,7 @@ from google.genai import types
 
 from .config import CONFIG
 from .models import (
+    TAX_CONCIERGE_CATALOG_ID,
     A2UIAction,
     A2UIBinding,
     A2UIComponent,
@@ -23,7 +24,6 @@ from .models import (
     HumanInputResponse,
     TaxIntake,
     TaxWorkflowInput,
-    TAX_CONCIERGE_CATALOG_ID,
 )
 from .routing import (
     compute_confidence,
@@ -464,8 +464,8 @@ def _build_recommendation_a2ui_messages(
     intake: TaxIntake, summary: str
 ) -> list[A2UIMessage]:
     return _surface_messages(
-        surface_id="recommendation",
-        root="recommendation_card",
+        surface_id="tax-intake",
+        root="recommendation_workbench",
         data={
             "taxIntake": {
                 "knownFacts": intake.known_facts,
@@ -477,13 +477,68 @@ def _build_recommendation_a2ui_messages(
         },
         components=[
             A2UIComponent(
-                id="recommendation_card",
-                component="RecommendationCard",
-                props={"headline": "We have a recommendation.", "body": summary},
+                id="recommendation_workbench",
+                component="RecommendationWorkbench",
+                props={
+                    "headline": "We have a recommendation.",
+                    "recommendation": summary,
+                    "body": summary,
+                    "insights": _recommendation_insights(intake),
+                    "assumptions": _recommendation_assumptions(intake),
+                    "nextSteps": _recommendation_next_steps(summary),
+                    "profile": _advisor_profile(),
+                },
                 action=A2UIAction(event="continue_recommendation", payload={}),
             ),
         ],
     )
+
+
+def _advisor_profile() -> dict[str, Any]:
+    return {
+        "avatar": "/images/john-mark-wendler.jpg",
+        "name": "John Mark Wendler",
+        "credential": "Certified Public Accountant",
+        "bio": "17 years of tax experience helping business owners make careful filing decisions.",
+        "years": 17,
+        "website": "https://www.johnmarkwendler.com",
+        "linkedin": "https://linkedin.com/in/johnmarkwendler",
+    }
+
+
+def _recommendation_insights(intake: TaxIntake) -> list[str]:
+    insights: list[str] = []
+    structure = str(intake.known_facts.get("business_structure") or "")
+    owners = str(intake.known_facts.get("owner_count") or "")
+    election = str(intake.known_facts.get("s_corp_election_status") or "")
+    if structure:
+        insights.append(f"Your business setup is marked as {structure}.")
+    if owners:
+        insights.append(f"Ownership is marked as {owners.lower()}.")
+    if election:
+        insights.append(f"S-Corp election status is {election.lower()}.")
+    if intake.candidate_entities:
+        insights.append(f"The matching path is {' or '.join(intake.candidate_entities)}.")
+    return insights or ["The facts you confirmed are enough to prepare a likely tax path."]
+
+
+def _recommendation_assumptions(intake: TaxIntake) -> list[str]:
+    assumptions = [
+        "This is based only on the facts provided in this session.",
+        "State filing rules and late elections may change the next action.",
+    ]
+    election = str(intake.known_facts.get("s_corp_election_status") or "").lower()
+    if election == "not sure":
+        assumptions.insert(0, "The S-Corp election should be confirmed before relying on this path.")
+    return assumptions
+
+
+def _recommendation_next_steps(summary: str) -> list[str]:
+    return [
+        f"Review the facts behind {summary}.",
+        "Save any formation records, election letters, and income forms that support this setup.",
+        "Get tax advice from John Mark Wendler before filing or making an election.",
+    ]
 
 
 def _surface_messages(

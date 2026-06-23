@@ -6,7 +6,7 @@ import os
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Annotated, Any
 from uuid import uuid4
 
 from fastapi import FastAPI, File, HTTPException, UploadFile
@@ -257,6 +257,8 @@ app.add_middleware(
 )
 if (FRONTEND_DIST / "assets").exists():
     app.mount("/assets", StaticFiles(directory=FRONTEND_DIST / "assets"), name="assets")
+if (FRONTEND_DIST / "images").exists():
+    app.mount("/images", StaticFiles(directory=FRONTEND_DIST / "images"), name="images")
 
 
 @app.get("/", response_class=HTMLResponse)
@@ -283,6 +285,7 @@ async def tax_concierge_catalog() -> dict[str, Any]:
             "DocumentFieldReviewCard",
             "SecurityReviewCard",
             "RecommendationCard",
+            "RecommendationWorkbench",
         ],
         "events": [
             "submit_story",
@@ -323,7 +326,7 @@ async def intake(request: IntakeRequest) -> SessionState:
     sanitized, redacted_categories = _sanitize_story(request.user_story)
     prior = SESSIONS.get(session_id) or _new_session_state(session_id)
     prior.sanitized_user_story = sanitized
-    prior.redacted_categories = sorted(set([*prior.redacted_categories, *redacted_categories]))
+    prior.redacted_categories = sorted({*prior.redacted_categories, *redacted_categories})
     prior.known_facts = {**prior.known_facts, **request.known_facts, **_extract_demo_facts(sanitized)}
     prior.missing_facts = _missing_facts(prior.known_facts)
     prior.candidate_entities = _candidate_entities(prior.known_facts)
@@ -336,9 +339,9 @@ async def intake(request: IntakeRequest) -> SessionState:
         if prior.readiness_state == READINESS_READY
         else "understanding"
     )
-    prior.a2ui_messages = _build_a2ui_messages(prior)
     prior.recommendation = _recommendation_for(prior)
     prior.explanation = _explanation_for(prior)
+    prior.a2ui_messages = _build_a2ui_messages(prior)
 
     message = {
         "role": "user",
@@ -367,8 +370,8 @@ async def intake(request: IntakeRequest) -> SessionState:
 
 @app.post("/api/upload", response_model=SessionState)
 async def upload(
+    file: Annotated[UploadFile, File(...)],
     session_id: str | None = None,
-    file: UploadFile = File(...),
 ) -> SessionState:
     session_id = session_id or str(uuid4())
     state = SESSIONS.get(session_id) or _new_session_state(session_id)
@@ -388,8 +391,9 @@ async def upload(
     state.candidate_entities = _candidate_entities(state.known_facts)
     state.readiness_state = _readiness_state(state)
     state.current_stage = "document_review"
-    state.a2ui_messages = _build_a2ui_messages(state)
+    state.recommendation = _recommendation_for(state)
     state.explanation = "I pulled out the clearest details and marked anything uncertain for review."
+    state.a2ui_messages = _build_a2ui_messages(state)
     SESSIONS[session_id] = state
     return state
 
@@ -410,9 +414,9 @@ async def action(session_id: str, request: ActionRequest) -> SessionState:
     state.candidate_entities = _candidate_entities(state.known_facts)
     state.readiness_state = _readiness_state(state)
     state.current_stage = "recommendation" if state.readiness_state == READINESS_READY else "follow_up"
-    state.a2ui_messages = _build_a2ui_messages(state)
     state.recommendation = _recommendation_for(state)
     state.explanation = _explanation_for(state)
+    state.a2ui_messages = _build_a2ui_messages(state)
     if result.events:
         state = _state_from_events(session_id, result.events, state)
     state.runtime_available = result.runtime_available and not result.error
@@ -540,8 +544,8 @@ def _build_a2ui_messages(state: SessionState) -> list[dict[str, Any]]:
     if not state.missing_facts:
         if state.readiness_state == READINESS_READY and state.recommendation:
             return _surface_messages(
-                "recommendation",
-                "recommendation_card",
+                "tax-intake",
+                "recommendation_workbench",
                 {
                     "taxIntake": {
                         "knownFacts": state.known_facts,
@@ -553,11 +557,16 @@ def _build_a2ui_messages(state: SessionState) -> list[dict[str, Any]]:
                 },
                 [
                     {
-                        "id": "recommendation_card",
-                        "component": "RecommendationCard",
+                        "id": "recommendation_workbench",
+                        "component": "RecommendationWorkbench",
                         "props": {
                             "headline": "We have a recommendation.",
+                            "recommendation": state.recommendation,
                             "body": state.explanation or "The key setup details are clear enough to continue.",
+                            "insights": _recommendation_insights(state),
+                            "assumptions": _recommendation_assumptions(state),
+                            "nextSteps": _recommendation_next_steps(state),
+                            "profile": _advisor_profile(),
                         },
                         "action": {"event": "continue_recommendation", "payload": {}},
                     },
@@ -670,6 +679,54 @@ def _recommendation_for(state: SessionState) -> str | None:
         return None
     candidates = [item for item in state.candidate_entities if item != "Cannot Determine Yet"]
     return candidates[0] if candidates else None
+
+
+def _advisor_profile() -> dict[str, Any]:
+    return {
+        "avatar": "/images/john-mark-wendler.jpg",
+        "name": "John Mark Wendler",
+        "credential": "Certified Public Accountant",
+        "bio": "17 years of tax experience helping business owners make careful filing decisions.",
+        "years": 17,
+        "website": "https://www.johnmarkwendler.com",
+        "linkedin": "https://linkedin.com/in/johnmarkwendler",
+    }
+
+
+def _recommendation_insights(state: SessionState) -> list[str]:
+    insights: list[str] = []
+    structure = str(state.known_facts.get("business_structure") or "")
+    owners = str(state.known_facts.get("owner_count") or "")
+    election = str(state.known_facts.get("s_corp_election_status") or "")
+    if structure:
+        insights.append(f"Your business setup is marked as {structure}.")
+    if owners:
+        insights.append(f"Ownership is marked as {owners.lower()}.")
+    if election:
+        insights.append(f"S-Corp election status is {election.lower()}.")
+    if state.candidate_entities:
+        insights.append(f"The matching path is {' or '.join(state.candidate_entities)}.")
+    return insights or ["The facts you confirmed are enough to prepare a likely tax path."]
+
+
+def _recommendation_assumptions(state: SessionState) -> list[str]:
+    assumptions = [
+        "This is based only on the facts provided in this session.",
+        "State filing rules and late elections may change the next action.",
+    ]
+    election = str(state.known_facts.get("s_corp_election_status") or "").lower()
+    if election == "not sure":
+        assumptions.insert(0, "The S-Corp election should be confirmed before relying on this path.")
+    return assumptions
+
+
+def _recommendation_next_steps(state: SessionState) -> list[str]:
+    recommendation = state.recommendation or "the likely tax path"
+    return [
+        f"Review the facts behind {recommendation}.",
+        "Save any formation records, election letters, and income forms that support this setup.",
+        "Get tax advice from John Mark Wendler before filing or making an election.",
+    ]
 
 
 def _explanation_for(state: SessionState) -> str:

@@ -4,6 +4,7 @@ export const SUPPORTED_COMPONENTS = new Set([
   "SegmentedChoiceCards",
   "SecurityReviewCard",
   "RecommendationCard",
+  "RecommendationWorkbench",
   "DocumentFieldReviewCard"
 ]);
 
