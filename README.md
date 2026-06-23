@@ -208,4 +208,5 @@ The last recorded dev deployment metadata is stored in `deployment_metadata.json
 
 ## Capstone Submission Notes
 
-This README is the technical setup guide. The <a href="https://www.kaggle.com/competitions/vibecoding-agents-capstone-project/writeups/tax-concierge-agent>Kaggle Writeup, media gallery, video, and public project link</a> should carry the broader project narrative, demo walkthrough, and judging-track positioning.
+This README is the technical setup guide. Linked below, the Kaggle Writeup, media gallery, video, and public project link should carry the broader project narrative, demo walkthrough, and judging-track positioning.
+https://www.kaggle.com/competitions/vibecoding-agents-capstone-project/writeups/tax-concierge-agent
