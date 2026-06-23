@@ -1,8 +1,15 @@
 import os
 
 from google import genai
+from google.adk.apps import App, ResumabilityConfig
 
-from tax_concierge_agent.agent import app, root_agent
+from tax_concierge_agent.agent import root_agent
+
+app = App(
+    name="app",
+    root_agent=root_agent,
+    resumability_config=ResumabilityConfig(is_resumable=True),
+)
 
 
 def gemini_client_from_env() -> genai.Client:
