@@ -208,15 +208,4 @@ The last recorded dev deployment metadata is stored in `deployment_metadata.json
 
 ## Capstone Submission Notes
 
-This README is the technical setup guide. The Kaggle Writeup, media gallery, video, and public project link should carry the broader project narrative, demo walkthrough, and judging-track positioning.
-
-For a valid capstone submission, prepare:
-
-- Kaggle Writeup under 2,500 words.
-- Cover image and media gallery.
-- Public YouTube video, 5 minutes or less.
-- Public project link or public code repository with setup instructions.
-
-## Resources
-
-Place course PDFs and supporting reference material in `resources/`. No PDFs were present in the workspace when this README was refreshed, so the folder is currently only a destination for those materials.
+This README is the technical setup guide. The <a href="https://www.kaggle.com/competitions/vibecoding-agents-capstone-project/writeups/tax-concierge-agent>Kaggle Writeup, media gallery, video, and public project link</a> should carry the broader project narrative, demo walkthrough, and judging-track positioning.
