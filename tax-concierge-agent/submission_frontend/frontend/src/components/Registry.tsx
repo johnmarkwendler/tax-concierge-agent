@@ -1,6 +1,9 @@
 import { AnimatePresence, LayoutGroup, motion, useReducedMotion } from "motion/react";
+import { CheckCircle, FileText, UploadCloud } from "lucide-react";
 import type { A2UIComponent, A2UISurface, DocumentReviewItem, ReadinessState } from "../lib/types";
 import { SUPPORTED_COMPONENTS } from "../lib/a2ui";
+
+type IntakeViewState = "initial" | "active" | "recommendation";
 
 type RegistryProps = {
   surface: A2UISurface | null;
@@ -9,6 +12,7 @@ type RegistryProps = {
   missingFacts: string[];
   candidateEntities: string[];
   documentItems: DocumentReviewItem[];
+  viewState: IntakeViewState;
   onAnswer: (fieldId: string, value: unknown) => void;
   onSecurityReview: (value: string) => void;
   onUpload: (file: File) => void;
@@ -34,18 +38,34 @@ const optionsFor = (value: unknown): { label: string; value: unknown }[] =>
     : [];
 
 export function A2UISurfaceView(props: RegistryProps) {
+  if (!props.surface?.components.length) return null;
+
+  const hasFacts = Object.keys(props.knownFacts).length > 0;
+  const hasDocuments = props.documentItems.length > 0;
+  const showSideRail = hasFacts || hasDocuments || props.viewState === "recommendation";
+
   return (
     <LayoutGroup id="tax-concierge-intake">
-      <div className="workbench">
-        <main className="primary-flow">
-          <StoryInputCard />
+      <div className={`workflow-shell workflow-${props.viewState}`}>
+        <main className="workflow-main">
+          <ProgressStrip
+            knownFacts={props.knownFacts}
+            readiness={props.readiness}
+            missingFacts={props.missingFacts}
+          />
           <SurfaceStage {...props} />
         </main>
-        <aside className="side-rail" aria-label="Tax intake status">
-          <ReadinessStatus readiness={props.readiness} missingFacts={props.missingFacts} />
-          <ConfirmedFactsRail facts={props.knownFacts} />
-          <DocumentUploadCard onUpload={props.onUpload} documentItems={props.documentItems} />
-        </aside>
+        {showSideRail ? (
+          <aside className="side-rail" aria-label="Tax intake status">
+            {props.viewState === "recommendation" ? (
+              <ReadinessStatus readiness={props.readiness} missingFacts={props.missingFacts} />
+            ) : null}
+            {hasFacts ? <ConfirmedFactsRail facts={props.knownFacts} /> : null}
+            {hasDocuments ? (
+              <DocumentUploadCard onUpload={props.onUpload} documentItems={props.documentItems} />
+            ) : null}
+          </aside>
+        ) : null}
       </div>
     </LayoutGroup>
   );
@@ -55,14 +75,7 @@ function SurfaceStage(props: RegistryProps) {
   const surface = props.surface;
   const reduce = useReducedMotion();
 
-  if (!surface?.components.length) {
-    return (
-      <motion.section layout className="guided-card quiet-card">
-        <h2>Follow-up questions will appear here one at a time.</h2>
-        <p>Start with what you know. We will organize the details as they become useful.</p>
-      </motion.section>
-    );
-  }
+  if (!surface?.components.length) return null;
 
   const root = surface.components.find((component) => component.id === surface.root) ?? surface.components[0];
   return (
@@ -78,6 +91,41 @@ function SurfaceStage(props: RegistryProps) {
         <RenderComponent component={root} {...props} />
       </motion.div>
     </AnimatePresence>
+  );
+}
+
+function ProgressStrip({
+  knownFacts,
+  readiness,
+  missingFacts
+}: {
+  knownFacts: Record<string, unknown>;
+  readiness: ReadinessState;
+  missingFacts: string[];
+}) {
+  const completed = Math.min(Object.keys(knownFacts).length, 3);
+  const activeQuestion = completed + 1;
+
+  return (
+    <motion.section layout className="progress-strip" aria-label="Intake progress">
+      <div>
+        <span className="progress-kicker">Question {activeQuestion}</span>
+        <strong>{readiness}</strong>
+      </div>
+      <div className="progress-segments" aria-hidden="true">
+        {[0, 1, 2, 3].map((index) => (
+          <span
+            key={index}
+            className={index < completed ? "is-complete" : index === completed ? "is-active" : ""}
+          />
+        ))}
+      </div>
+      <p>
+        {missingFacts.length
+          ? `${missingFacts.length} detail${missingFacts.length === 1 ? "" : "s"} still needed`
+          : "We have enough to keep moving."}
+      </p>
+    </motion.section>
   );
 }
 
@@ -106,18 +154,6 @@ function RenderComponent({ component, ...props }: RegistryProps & { component: A
   return null;
 }
 
-export function StoryInputCard() {
-  return (
-    <motion.section layout className="hero-intake" aria-label="Tax Concierge intake">
-      <div>
-        <p className="product-name">Tax Concierge</p>
-        <h1>Not sure where to start? Just tell us what's going on</h1>
-        <p className="hero-copy">Come as you are. We will figure out the entity path together.</p>
-      </div>
-    </motion.section>
-  );
-}
-
 function SegmentedChoiceCards({
   component,
   onAnswer
@@ -143,6 +179,8 @@ function SegmentedChoiceCards({
             layout
             type="button"
             className="choice-card"
+            initial={{ opacity: 0, y: 8 }}
+            animate={{ opacity: 1, y: 0 }}
             whileTap={{ scale: 0.99 }}
             onClick={() => onAnswer(fieldId, option.value)}
           >
@@ -290,6 +328,7 @@ function DocumentUploadCard({
             event.currentTarget.value = "";
           }}
         />
+        <UploadCloud size={18} />
         <span>Upload document</span>
       </label>
       <DocumentFieldReviewCard documentItems={documentItems} />
@@ -309,9 +348,15 @@ function DocumentFieldReviewCard({ documentItems }: { documentItems: DocumentRev
           key={`${item.field_label}:${item.extracted_value}`}
           className="doc-row"
         >
-          <span>{item.field_label}</span>
+          <span>
+            <FileText size={16} />
+            {item.field_label}
+          </span>
           <strong>{item.extracted_value}</strong>
-          <small>{item.needs_review ? "Needs review" : item.confidence_state}</small>
+          <small>
+            {!item.needs_review ? <CheckCircle size={14} /> : null}
+            {item.needs_review ? "Needs review" : item.confidence_state}
+          </small>
         </motion.div>
       ))}
     </motion.div>
