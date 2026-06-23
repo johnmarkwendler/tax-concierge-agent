@@ -94,7 +94,7 @@ flowchart LR
 
 The architecture supports ambient events by letting frontend and document-upload producers publish normalized tax intake events to `tax-intake-events`, where an authenticated push subscription can invoke the Agent Runtime workflow directly. The ADK graph emits official A2UI protocol messages during `RequestInput` pauses for human-in-the-loop review, while the Cloud Run frontend resumes those sessions and renders Basic Catalog A2UI surfaces instead of chatbot transcripts. Sensitive taxpayer details are redacted in the security checkpoint before model reasoning, and optional document understanding routes low-confidence extracted fields into editable A2UI review cards rather than exposing raw OCR text.
 
-> 💡 **Tip:** Use [Gemini CLI](https://github.com/google-gemini/gemini-cli) for AI-assisted development - project context is pre-configured in `GEMINI.md`.
+> 💡 **Tip:** Use [Gemini CLI](https://github.com/google-gemini/gemini-cli) for AI-assisted development - project context is pre-configured in `AGENTS.md`.
 
 ## Requirements
 
@@ -148,7 +148,7 @@ You can also use features from the [ADK](https://adk.dev/) CLI with `uv run adk`
 
 ## Development
 
-Edit your agent logic in `app/agent.py` and test with `agents-cli playground` - it auto-reloads on save.
+Edit your agent logic in `tax_concierge_agent/agent.py` and test with `agents-cli playground` - it auto-reloads on save.
 
 ## Deployment
 
