@@ -31,20 +31,22 @@ repos:
         pass_filenames: false
         args:
           - --config
-          - tax-concierge-agent/tax_concierge_agent/.semgrep/rules.yaml
+          - tax_concierge_agent/.semgrep/rules.yaml
           - --config
           - p/secrets
           - --config
           - p/security-audit
           - --error
-          - --no-git-ignore
-          - --x-ignore-semgrepignore-files
           - --exclude
-          - tax-concierge-agent/.venv
+          - .venv
           - --exclude
-          - tax-concierge-agent/artifacts
+          - artifacts
           - --exclude
-          - tax-concierge-agent/.ruff_cache
+          - .ruff_cache
           - --exclude
-          - tax-concierge-agent/.pytest_cache
-          - tax-concierge-agent
+          - .pytest_cache
+          - --exclude
+          - submission_frontend/frontend/node_modules
+          - --exclude
+          - submission_frontend/frontend/dist
+          - .
